@@ -1,0 +1,37 @@
+# protected-paths
+#
+# Patterns whose matching files protect-paths shadows with /dev/null inside
+# the container at startup, so they appear as empty files regardless of
+# their contents on the host.
+#
+# Format (one pattern per line, all paths relative to /workspaces/archive):
+#
+#   path/to/file              exact relative path
+#   **/<basename>             every file matching <basename> anywhere in the
+#                             workspace. <basename> is a fnmatch pattern with
+#                             '/' disallowed (e.g. **/.env, **/.env.*.local).
+#                             Build/dependency dirs (node_modules, .git,
+#                             .tsc-build, dist, build, .next, .yarn) are
+#                             pruned from the search.
+#   <dir>/**                  every regular file under <dir>, recursively.
+#   !<pattern>                exclusion. Same three shapes as above. A file
+#                             that matches any include AND any exclusion is
+#                             left unmasked. Order-independent (gitignore-
+#                             style negation). Use for checked-in fixtures
+#                             that live next to real secrets.
+#
+# Blank lines and lines starting with '#' are ignored. Absolute paths and
+# paths containing '..' are rejected. Patterns that don't match anything on
+# the host are skipped silently.
+
+# .env files. The chosen basenames mirror the deny rules in
+# .devcontainer/config/initialize.sh and the .gitignore convention:
+#   .env             — the file dotenv.config() loads
+#   .env.local       — Next.js auto-loads this in every mode except test
+#   .env.*.local     — Next.js per-mode override (.env.production.local etc.)
+# Checked-in fixtures (.env.example, .env.template, .env.test_shadow,
+# example.env) and the per-mode defaults file (.env.production, which is
+# checked into git by Next.js convention) are intentionally not masked.
+**/.env
+**/.env.local
+**/.env.*.local

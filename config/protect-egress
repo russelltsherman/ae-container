@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Flush existing OUTPUT rules
+iptables -F OUTPUT
+
+# Allow loopback (squid listens on 127.0.0.1:3128)
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# Allow the squid proxy user to reach the internet
+iptables -A OUTPUT -m owner --uid-owner proxy -j ACCEPT
+
+# Drop all other outbound traffic
+iptables -A OUTPUT -j DROP

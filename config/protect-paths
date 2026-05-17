@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Shadow the patterns listed in .devcontainer/protected-paths with /dev/null
+# so secrets on the host are not visible to processes running inside the
+# container.
+#
+# Supported pattern shapes (all relative to /workspaces/archive):
+#   path/to/file        exact relative path
+#   **/<basename>       every file matching <basename> anywhere in the
+#                       workspace. <basename> is passed to find(1) -name and
+#                       may contain fnmatch wildcards (e.g. **/.env.*.local),
+#                       but not '/'. Build/dependency directories are pruned.
+#   <dir>/**            every regular file under <dir>, recursively.
+#
+# A line beginning with '!' declares an exclusion in the same three shapes;
+# any file that would otherwise be masked by an include is left untouched if
+# it matches any exclusion. Exclusions are useful for checked-in fixtures
+# (templates, examples) that live alongside real secrets and must remain
+# readable inside the container.
+#
+# We can't do this via the Docker daemon on macOS: Docker Desktop serves the
+# workspace through virtioFS, and runc refuses to create nested bind mounts
+# whose target resolves inside the virtioFS mount. Instead we perform the
+# bind mount from inside the container at startup, where the workspace is a
+# normal entry in our mount namespace. This requires CAP_SYS_ADMIN, which is
+# why this script is invoked via the tightly-scoped sudoers entry.
+#
+# Testing seam (production behavior unchanged when both vars are unset):
+#   PROTECT_PATHS_WORKSPACE   override the workspace root being scanned
+#   PROTECT_PATHS_MASK_HOOK   path to an executable invoked with the absolute
+#                             target instead of `mount --bind /dev/null`
+
+WORKSPACE="${PROTECT_PATHS_WORKSPACE:-/workspaces/archive}"
+PATHS_FILE="${WORKSPACE}/.devcontainer/protected-paths"
+
+# Directory names skipped during recursive search: vendor/build artifacts
+# that are never sources of host secrets and expensive to walk.
+PRUNE_NAMES=(node_modules .git .tsc-build dist build .next .yarn)
+
+if [[ ! -f "$PATHS_FILE" ]]; then
+  echo "protect-paths: no list at $PATHS_FILE; nothing to do" >&2
+  exit 0
+fi
+
+# Pre-built `find` prune expression: \( -name a -o -name b ... \) -prune -o
+PRUNE_EXPR=( "(" )
+for i in "${!PRUNE_NAMES[@]}"; do
+  (( i > 0 )) && PRUNE_EXPR+=( "-o" )
+  PRUNE_EXPR+=( "-name" "${PRUNE_NAMES[$i]}" )
+done
+PRUNE_EXPR+=( ")" "-prune" "-o" )
+
+# Two-pass parse: collect includes and exclusions before scanning, so an
+# exclusion declared after an include still applies (order-independent
+# semantics, matching how gitignore-style negations are usually understood).
+INCLUDES=()
+EXCLUDE_BASENAMES=()
+EXCLUDE_PREFIXES=()
+EXCLUDE_EXACTS=()
+
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line%%#*}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  [[ -z "$line" ]] && continue
+
+  if [[ "$line" == !* ]]; then
+    pat="${line#!}"
+    if [[ "$pat" == /* ]] || [[ "$pat" == *..* ]]; then
+      echo "protect-paths: refusing exclusion '$pat' (must be relative, must not contain '..')" >&2
+      continue
+    fi
+    if [[ "$pat" =~ ^\*\*/([^/]+)$ ]]; then
+      EXCLUDE_BASENAMES+=( "${BASH_REMATCH[1]}" )
+    elif [[ "$pat" =~ ^([^*]+)/\*\*$ ]]; then
+      EXCLUDE_PREFIXES+=( "${BASH_REMATCH[1]}" )
+    elif [[ "$pat" != *\** ]]; then
+      EXCLUDE_EXACTS+=( "$pat" )
+    else
+      echo "protect-paths: refusing exclusion '$pat' (only '**/<basename>', '<dir>/**', or literal path supported)" >&2
+    fi
+    continue
+  fi
+
+  if [[ "$line" == /* ]] || [[ "$line" == *..* ]]; then
+    echo "protect-paths: refusing '$line' (must be relative, must not contain '..')" >&2
+    continue
+  fi
+  INCLUDES+=( "$line" )
+done < "$PATHS_FILE"
+
+is_excluded() {
+  local rel="$1"
+  local base="${rel##*/}"
+  local p
+  if (( ${#EXCLUDE_BASENAMES[@]} > 0 )); then
+    for p in "${EXCLUDE_BASENAMES[@]}"; do
+      # shellcheck disable=SC2053  # intentional fnmatch via unquoted RHS
+      [[ "$base" == $p ]] && return 0
+    done
+  fi
+  if (( ${#EXCLUDE_PREFIXES[@]} > 0 )); then
+    for p in "${EXCLUDE_PREFIXES[@]}"; do
+      [[ "$rel" == "$p"/* ]] && return 0
+    done
+  fi
+  if (( ${#EXCLUDE_EXACTS[@]} > 0 )); then
+    for p in "${EXCLUDE_EXACTS[@]}"; do
+      [[ "$rel" == "$p" ]] && return 0
+    done
+  fi
+  return 1
+}
+
+mask_one() {
+  local target="$1"
+  [[ -f "$target" ]] || return 0
+  local rel="${target#"$WORKSPACE"/}"
+  if is_excluded "$rel"; then
+    return 0
+  fi
+  if [[ -n "${PROTECT_PATHS_MASK_HOOK:-}" ]]; then
+    "$PROTECT_PATHS_MASK_HOOK" "$target"
+  else
+    mount --bind /dev/null "$target"
+  fi
+}
+
+mask_by_name() {
+  local name="$1"
+  while IFS= read -r -d '' target; do
+    mask_one "$target"
+  done < <(find "$WORKSPACE" "${PRUNE_EXPR[@]}" -type f -name "$name" -print0)
+}
+
+mask_under() {
+  local prefix="$1"
+  local root="$WORKSPACE/$prefix"
+  [[ -d "$root" ]] || return 0
+  while IFS= read -r -d '' target; do
+    mask_one "$target"
+  done < <(find "$root" "${PRUNE_EXPR[@]}" -type f -print0)
+}
+
+if (( ${#INCLUDES[@]} > 0 )); then
+  for line in "${INCLUDES[@]}"; do
+    if [[ "$line" != *\** ]]; then
+      # Literal relative path.
+      mask_one "$WORKSPACE/$line"
+    elif [[ "$line" =~ ^\*\*/([^/]+)$ ]]; then
+      # **/<basename>  (basename may contain fnmatch wildcards)
+      mask_by_name "${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^([^*]+)/\*\*$ ]]; then
+      # <dir>/**       (dir prefix must be a literal path, no globs)
+      mask_under "${BASH_REMATCH[1]}"
+    else
+      echo "protect-paths: refusing '$line' (only '**/<basename>' or '<dir>/**' supported)" >&2
+    fi
+  done
+fi

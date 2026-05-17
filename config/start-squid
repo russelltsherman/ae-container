@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pinned launcher for squid. The vscode sudoers entry allows this script
+# with no argument control. Allowing `sudo squid` directly would let the
+# agent start a second squid with an attacker-controlled config (e.g.
+# `http_access allow all`) that still runs as the proxy UID and is therefore
+# permitted by the iptables egress rule — bypassing the allowlist entirely.
+
+exec /usr/sbin/squid -N -f /etc/squid/squid.conf
