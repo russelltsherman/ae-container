@@ -5,7 +5,7 @@ set -euo pipefail
 # so secrets on the host are not visible to processes running inside the
 # container.
 #
-# Supported pattern shapes (all relative to /workspaces/archive):
+# Supported pattern shapes (all relative to the workspace root):
 #   path/to/file        exact relative path
 #   **/<basename>       every file matching <basename> anywhere in the
 #                       workspace. <basename> is passed to find(1) -name and
@@ -31,7 +31,24 @@ set -euo pipefail
 #   PROTECT_PATHS_MASK_HOOK   path to an executable invoked with the absolute
 #                             target instead of `mount --bind /dev/null`
 
-WORKSPACE="${PROTECT_PATHS_WORKSPACE:-/workspaces/archive}"
+if [[ -n "${PROTECT_PATHS_WORKSPACE:-}" ]]; then
+  WORKSPACE="$PROTECT_PATHS_WORKSPACE"
+else
+  WORKSPACE=""
+  for d in /workspaces/*/; do
+    [[ -d "$d" ]] || continue
+    if [[ -f "${d}.devcontainer/protected-paths" ]]; then
+      WORKSPACE="${d%/}"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$WORKSPACE" ]]; then
+  echo "protect-paths: no workspace with .devcontainer/protected-paths found under /workspaces/; nothing to do" >&2
+  exit 0
+fi
+
 PATHS_FILE="${WORKSPACE}/.devcontainer/protected-paths"
 
 # Directory names skipped during recursive search: vendor/build artifacts

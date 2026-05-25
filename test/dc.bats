@@ -20,7 +20,7 @@
 # Requires: bash, docker, jq, bats-core. `bin/dc up` additionally requires
 # the macOS keychain entry "Claude Code-credentials".
 
-REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 DC="$REPO_ROOT/bin/dc"
 PROFILE_PATH="$REPO_ROOT/.devcontainer/etc/seccomp/hardened.json"
 
@@ -294,6 +294,7 @@ setup_file() {
   export DC_CONTAINER_ID=""
   export DC_ENV_FIXTURE_CREATED=0
   export OWN_CONTAINER=0
+  export DC_WORKSPACE="/workspaces/$(basename "$REPO_ROOT")"
 
   if ! docker info &>/dev/null; then
     INTEGRATION_SKIP_REASON="Docker Desktop is not running"
@@ -425,7 +426,7 @@ dc_live_seccomp_json() {
 
 @test "T-040 / PC-04: .env matched by protected-paths is empty inside container" {
   _integration_restore_env
-  run dc_exec bash -c 'wc -c < /workspaces/archive/.env'
+  run dc_exec bash -c "wc -c < ${DC_WORKSPACE}/.env"
   [ "$status" -eq 0 ]
   [[ "$output" =~ ^[[:space:]]*0[[:space:]]*$ ]]
 }
@@ -447,10 +448,10 @@ dc_live_seccomp_json() {
   # setup_file ensures at least one .env (root fixture) exists.
   [ "${#targets[@]}" -ge 1 ]
   for rel in "${targets[@]}"; do
-    run dc_exec bash -c "wc -c < /workspaces/archive/$rel"
+    run dc_exec bash -c "wc -c < ${DC_WORKSPACE}/$rel"
     [ "$status" -eq 0 ]
     [[ "$output" =~ ^[[:space:]]*0[[:space:]]*$ ]] \
-      || { echo "expected /workspaces/archive/$rel masked, got: '$output'"; return 1; }
+      || { echo "expected ${DC_WORKSPACE}/$rel masked, got: '$output'"; return 1; }
   done
 }
 
@@ -468,10 +469,10 @@ dc_live_seccomp_json() {
       local rel="${f#$REPO_ROOT/}"
       local base="${rel##*/}"
       case "$base" in *.template.*) continue ;; esac
-      run dc_exec bash -c "wc -c < /workspaces/archive/$rel"
+      run dc_exec bash -c "wc -c < ${DC_WORKSPACE}/$rel"
       [ "$status" -eq 0 ]
       [[ "$output" =~ ^[[:space:]]*0[[:space:]]*$ ]] \
-        || { echo "expected /workspaces/archive/$rel masked, got: '$output'"; return 1; }
+        || { echo "expected ${DC_WORKSPACE}/$rel masked, got: '$output'"; return 1; }
       checked+=1
     done < <(find "$REPO_ROOT/$dir" -type f)
   done
@@ -489,11 +490,11 @@ dc_live_seccomp_json() {
     while IFS= read -r f; do
       local rel="${f#$REPO_ROOT/}"
       local host_bytes; host_bytes=$(wc -c < "$f" | tr -d '[:space:]')
-      run dc_exec bash -c "wc -c < /workspaces/archive/$rel"
+      run dc_exec bash -c "wc -c < ${DC_WORKSPACE}/$rel"
       [ "$status" -eq 0 ]
       local in_bytes; in_bytes=$(echo "$output" | tr -d '[:space:]')
       [ "$in_bytes" = "$host_bytes" ] \
-        || { echo "expected /workspaces/archive/$rel unmasked ($host_bytes bytes), got: '$in_bytes'"; return 1; }
+        || { echo "expected ${DC_WORKSPACE}/$rel unmasked ($host_bytes bytes), got: '$in_bytes'"; return 1; }
       checked+=1
     done < <(find "$REPO_ROOT/$dir" -type f -name '*.template.*')
   done
@@ -504,7 +505,7 @@ dc_live_seccomp_json() {
   _integration_restore_env
   # packages/secrets/ is a TS workspace package, not a secrets directory.
   # If it were swept up by a naive **/secrets/ glob, the build would break.
-  run dc_exec bash -c 'wc -c < /workspaces/archive/packages/secrets/package.json'
+  run dc_exec bash -c "wc -c < ${DC_WORKSPACE}/packages/secrets/package.json"
   [ "$status" -eq 0 ]
   bytes="$(echo "$output" | tr -d '[:space:]')"
   [ "$bytes" -gt 0 ]
@@ -708,7 +709,7 @@ dc_live_seccomp_json() {
 @test "CS-06: Claude project settings file contains non-empty deny rules" {
   _integration_restore_env
   run dc_exec bash -c "
-    s=/home/vscode/.claude/projects/-workspaces-archive/settings.json
+    s=/home/vscode/.claude/projects/-workspaces-$(basename ${DC_WORKSPACE})/settings.json
     [ -f \"\$s\" ] && jq -e '.permissions.deny | length > 0' \"\$s\""
   [ "$status" -eq 0 ]
 }

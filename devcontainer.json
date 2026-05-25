@@ -72,6 +72,6 @@
 
   "remoteUser": "vscode",
 
-  "workspaceFolder": "/workspaces/agent",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/agent,type=bind,consistency=cached"
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind,consistency=cached"
 }

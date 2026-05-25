@@ -62,12 +62,6 @@ RUN chmod 0755 /usr/local/bin/show-motd \
 COPY etc/sudoers.d/vscode /etc/sudoers.d/vscode
 RUN chmod 0440 /etc/sudoers.d/vscode
 
-# Mark the workspace as a safe.directory at the system scope so git tolerates
-# the uid mismatch between the container user (vscode, uid 1000) and the host
-# owner seen through virtioFS on Docker Desktop. Writing at --system scope
-# keeps this out of the bind-mounted ~/.gitconfig, whose atomic-rename write
-# path fails with EBUSY against a single-file bind mount.
-RUN git config --system --add safe.directory /workspaces/agent
 
 # Install Claude Code as vscode user (native installer writes to ~/.local/bin)
 USER vscode

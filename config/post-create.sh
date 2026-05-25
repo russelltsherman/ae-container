@@ -10,6 +10,14 @@ set -euo pipefail
 
 # $HOME here is /home/vscode inside the container.
 
+# Mark the workspace as safe.directory so git tolerates the uid mismatch
+# between the container user (vscode, uid 1000) and the host owner seen
+# through virtioFS. Uses XDG git config (~/.config/git/config) rather than
+# --system (needs root) or --global (~/.gitconfig is a bind mount that
+# fails atomic-rename writes with EBUSY).
+mkdir -p ~/.config/git
+git config --file ~/.config/git/config --add safe.directory "$(pwd)"
+
 # Purpose: configure the shell environment for Claude Code.
 # Runs once per container creation, not on every attach.
 

@@ -213,6 +213,7 @@ cmd_template() {
   cp -r "$SCRIPT_DIR/etc" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/Dockerfile" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/devcontainer.json" "$devcontainer_dir/"
+  cp "$SCRIPT_DIR/protected-paths" "$devcontainer_dir/"
 
   # Restore preserved mounts
   if [[ -n "$preserved_mounts" ]]; then

@@ -50,8 +50,9 @@ macos_keychain_export
 
 # ensure the container workspace project config exists on the host and is initially populated with
 # deny permissions to cover typical env file locations.
-mkdir -p "$HOME/.claude/projects/-workspaces-archive/"
-project_settings="$HOME/.claude/projects/-workspaces-archive/settings.json"
+ws_name="$(basename "$(pwd)")"
+mkdir -p "$HOME/.claude/projects/-workspaces-${ws_name}/"
+project_settings="$HOME/.claude/projects/-workspaces-${ws_name}/settings.json"
 if [[ ! -e "$project_settings" ]]; then
   cat > "$project_settings" <<'JSON'
 {

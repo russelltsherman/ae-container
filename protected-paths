@@ -4,7 +4,7 @@
 # the container at startup, so they appear as empty files regardless of
 # their contents on the host.
 #
-# Format (one pattern per line, all paths relative to /workspaces/archive):
+# Format (one pattern per line, all paths relative to workspace root):
 #
 #   path/to/file              exact relative path
 #   **/<basename>             every file matching <basename> anywhere in the
