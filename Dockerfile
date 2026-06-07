@@ -28,7 +28,7 @@ RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
 
 # install NPM dependencies
 RUN npm install -g \
-    @openai/codex@0.130.0 \
+    @openai/codex@0.137.0 \
     @devcontainers/cli@0.87.0 \
     @withgraphite/graphite-cli@1.8.6 \
     yarn@1.22.22 \
@@ -63,6 +63,8 @@ RUN chmod 0755 /usr/local/bin/show-motd \
 COPY etc/sudoers.d/vscode /etc/sudoers.d/vscode
 RUN chmod 0440 /etc/sudoers.d/vscode
 
+# BIN scripts
+COPY --chown=vscode:vscode bin /home/vscode/bin
 
 # Install Claude Code as vscode user (native installer writes to ~/.local/bin)
 USER vscode

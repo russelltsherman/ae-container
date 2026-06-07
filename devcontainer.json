@@ -19,7 +19,18 @@
     "OMLX_API_KEY": "${localEnv:OMLX_API_KEY}",
     "OMLX_PORT": "${localEnv:OMLX_PORT}",
     "OMLX_MODEL": "${localEnv:OMLX_MODEL}",
-    "OMLX_CONTEXT_WINDOW": "${localEnv:OMLX_CONTEXT_WINDOW}"
+    "OMLX_CONTEXT_WINDOW": "${localEnv:OMLX_CONTEXT_WINDOW}",
+
+    // Ollama local model server on the host. Forwarded to the ollama/ollama-yolo
+    // shell functions, which point Claude Code at Ollama's native Anthropic API
+    // (/v1/messages) via host.docker.internal. OLLAMA_MODEL is required — it must
+    // name an installed Ollama model (e.g. qwen3.6:35b-mlx) or the launcher errors.
+    // On Docker Desktop (macOS/Windows) the container reaches the host's default
+    // 127.0.0.1-bound ollama via host.docker.internal; on native Linux Docker,
+    // bind ollama to 0.0.0.0 instead.
+    "OLLAMA_MODEL": "${localEnv:OLLAMA_MODEL}",
+    "OLLAMA_PORT": "${localEnv:OLLAMA_PORT}",
+    "OLLAMA_API_KEY": "${localEnv:OLLAMA_API_KEY}"
   },
 
   "initializeCommand": "bash .devcontainer/config/initialize.sh",
@@ -31,21 +42,24 @@
     // shared agents configuration
     "source=${localEnv:HOME}/.agents/,target=/home/vscode/.agents/,type=bind",
 
-    // Claude Code
+    // Claude Code Config
     "source=${localEnv:HOME}/.claude/,target=/home/vscode/.claude/,type=bind",
     "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind",
 
-    // GH config (readonly)
-    "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,readonly",
+    // Codex Config
+    "source=${localEnv:HOME}/.codex/,target=/home/vscode/.codex/,type=bind",
 
-    // Git config (readonly)
-    "source=${localEnv:HOME}/.gitconfig,target=/home/vscode/.gitconfig,type=bind,readonly",
+    // SSH config (bot identity)
+    "source=${localEnv:HOME}/.bot/ssh/,target=/home/vscode/.ssh/,type=bind",
 
-    // SSH config (readonly)
-    "source=${localEnv:HOME}/.ssh/,target=/home/vscode/.ssh/,type=bind,readonly",
+    // Git config (bot identity)
+    "source=${localEnv:HOME}/.bot/gitconfig,target=/home/vscode/.gitconfig,type=bind",
 
-    // Graphite config
-    "source=${localEnv:HOME}/.config/graphite/,target=/home/vscode/.config/graphite/,type=bind"
+    // GH token (bot identity)
+    "source=${localEnv:HOME}/.bot/gh,target=/home/vscode/.config/gh,type=bind",
+
+    // Graphite config (bot identity)
+    "source=${localEnv:HOME}/.bot/graphite/,target=/home/vscode/.config/graphite/,type=bind"
 
     // Paths listed in .devcontainer/protected-paths are shadowed from inside
     // the container at startup by /usr/local/sbin/protect-paths. See

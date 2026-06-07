@@ -62,3 +62,43 @@ omlx-yolo() {
   omlx --dangerously-skip-permissions "$@"
 }
 BASHRC
+
+# Ollama variants: Ollama 0.24+ natively serves the Anthropic Messages API at
+# /v1/messages, so Claude Code talks to it directly — no proxy, no omlx.
+# Determined empirically against claude 2.1.160 + ollama 0.24.0:
+#   - Only two vars are actually required: ANTHROPIC_BASE_URL and ANTHROPIC_MODEL.
+#     Without a model override Claude requests claude-* model IDs that Ollama
+#     doesn't have and every call 404s. ANTHROPIC_MODEL is a global override —
+#     it covers the main loop AND subagents, so the per-tier DEFAULT_*_MODEL and
+#     CLAUDE_CODE_SUBAGENT_MODEL vars the omlx function uses are unnecessary here.
+#   - OLLAMA_MODEL is required (:?) because not setting it is a guaranteed 404;
+#     fail loudly instead of launching into a broken session.
+#   - Auth is NOT required (Ollama ignores credentials); ANTHROPIC_AUTH_TOKEN is
+#     set only as defense for a host that isn't logged into claude.ai.
+#   - Reaching the host (outside this launcher): on Docker Desktop (macOS/Windows)
+#     host.docker.internal proxies to the host loopback, so a default
+#     127.0.0.1-bound `ollama serve` is reachable as-is (verified end-to-end).
+#     On native Linux Docker you'd instead need ollama bound to all interfaces
+#     (OLLAMA_HOST=0.0.0.0:11434).
+#   - If Claude Code's large prompts (30k+ tokens) get truncated, raise the
+#     server-side OLLAMA_CONTEXT_LENGTH to fit the model's context window.
+cat >> ~/.bashrc << 'BASHRC'
+ollama() {
+  clear
+  local -a _env=(
+    -u ANTHROPIC_API_KEY                              # defensive: avoid real-key conflict
+    ANTHROPIC_BASE_URL="http://host.docker.internal:${OLLAMA_PORT:-11434}"
+    ANTHROPIC_MODEL="${OLLAMA_MODEL:?set OLLAMA_MODEL to an installed Ollama model, e.g. qwen3.6:35b-mlx}"
+    ANTHROPIC_SMALL_FAST_MODEL="${OLLAMA_MODEL}"      # defensive: background/classifier calls
+    ANTHROPIC_AUTH_TOKEN="${OLLAMA_API_KEY:-ollama}"  # optional: Ollama ignores the value
+    API_TIMEOUT_MS=3000000                            # local inference is slow
+    CLAUDE_CODE_ATTRIBUTION_HEADER=0
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+  )
+  env "${_env[@]}" claude "$@"
+  printf '\x1b[>0u'
+}
+ollama-yolo() {
+  ollama --dangerously-skip-permissions "$@"
+}
+BASHRC

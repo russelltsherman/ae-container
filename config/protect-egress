@@ -10,7 +10,7 @@ ip6tables -F OUTPUT
 ip6tables -A OUTPUT -o lo -j ACCEPT
 
 # Allow direct traffic to the Docker host gateway (host.docker.internal).
-# This lets the omlx aliases reach the local model server without going
+# This lets the omlx and ollama aliases reach the local model server without going
 # through squid, which Node.js HTTP clients don't reliably support for
 # plain HTTP. Safe because the host is the user's own machine, not the
 # public internet. The gateway may resolve to IPv4, IPv6, or both depending

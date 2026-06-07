@@ -1,32 +1,51 @@
 #!/usr/bin/env bats
-# .devcontainer/tests/dc.bats — consolidated devcontainer test suite.
+# test/devc.bats — consolidated devcontainer test suite.
 #
-# Covers:
-#   - bin/dc CLI (unit tests, stubbed)
-#   - Runtime invariants from SAFETY.md (NI-*, CS-*, PC-*) via docker inspect
-#     and docker exec against a live container
-#   - Seccomp hardening (PC-05) verified against the profile applied at runtime
+# The repository is a devcontainer *template*: the canonical sources live at
+# the repo root (config/, etc/, bin/, Dockerfile, devcontainer.json,
+# protected-paths) and install.sh's `devc template` copies them into a target
+# project's .devcontainer/ (which is gitignored / generated).
 #
-# Prefers runtime verification over static config grepping. Static checks
-# survive only where a runtime equivalent is not practical.
+# Layers (mirrors the host-side / in-container split):
+#
+#   UNIT (no container, stubbed) — target the repo-root sources:
+#     - install.sh            the `devc` host CLI (up/rebuild/down/template/...)
+#     - config/initialize.sh  host-side initializeCommand: docker probe, macOS
+#                             keychain export, project settings seeding,
+#                             mount-source placeholder creation
+#     - config/protect-paths  protected-paths pattern parser / exclusions
+#
+#   INTEGRATION (live container) — runtime invariants via docker inspect/exec:
+#     Privilege Containment (PC-*), Credential Scoping (CS-*), Network
+#     Isolation (NI-*), seccomp hardening (PC-05), required CLIs.
 #
 # Usage:
 #   # Fast path — adopt an existing running devcontainer:
-#   CONTAINER=<name-or-id> bats .devcontainer/tests/dc.bats
+#   CONTAINER=<name-or-id> bats test/devc.bats
 #
-#   # Full lifecycle — setup_file runs `bin/dc up`, teardown removes:
-#   bats .devcontainer/tests/dc.bats
+#   # Full lifecycle — setup_file regenerates .devcontainer/ from the repo-root
+#   # template (install.sh template), runs `devc up`, teardown removes it:
+#   bats test/devc.bats
 #
-# Requires: bash, docker, jq, bats-core. `bin/dc up` additionally requires
-# the macOS keychain entry "Claude Code-credentials".
+#   # Unit layer only (skip the build) — point CONTAINER at nothing:
+#   CONTAINER=__none__ bats test/devc.bats
+#
+# Requires: bash, docker, jq, bats-core, the devcontainer CLI. Full lifecycle
+# additionally needs the macOS keychain entry "Claude Code-credentials" and the
+# bot identity under ~/.bot (gitconfig, gh, graphite, ssh).
 
 REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
-DC="$REPO_ROOT/bin/dc"
-PROFILE_PATH="$REPO_ROOT/.devcontainer/etc/seccomp/hardened.json"
+INSTALL="$REPO_ROOT/install.sh"
+INITIALIZE="$REPO_ROOT/config/initialize.sh"
+PROTECT_PATHS="$REPO_ROOT/config/protect-paths"
 
 # Save real PATH/HOME before per-test setup() swaps them for stubs.
 REAL_PATH="$PATH"
 REAL_HOME="$HOME"
+
+# install.sh shells out to jq, which on this host lives outside /usr/bin
+# (mise/homebrew). Keep its directory reachable from the stubbed PATH.
+JQ_DIR="$(cd "$(dirname "$(command -v jq)")" && pwd)"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,104 +66,192 @@ stub_calls() {
   cat "$BATS_TEST_TMPDIR/calls/$1" 2>/dev/null || true
 }
 
-# Per-test setup: rebuild stub dir. Integration tests call
-# _integration_restore_env to swap back to real PATH/HOME.
+# Per-test setup: rebuild stub dir and point PATH/HOME at it. Integration
+# tests call _integration_restore_env to swap back to real PATH/HOME.
 setup() {
   mkdir -p "$BATS_TEST_TMPDIR/stubs"
   mkdir -p "$BATS_TEST_TMPDIR/calls"
   mkdir -p "$BATS_TEST_TMPDIR/home/.claude"
-  mkdir -p "$BATS_TEST_TMPDIR/home/.config/graphite"
   create_stub devcontainer 0 ""
-  create_stub security     0 '{"token":"test-token"}'
   create_stub docker       0 ""
-  export PATH="$BATS_TEST_TMPDIR/stubs:/usr/bin:/bin:/usr/sbin:/sbin"
+  create_stub security     0 '{"token":"test-token"}'
+  export PATH="$BATS_TEST_TMPDIR/stubs:$JQ_DIR:/usr/bin:/bin:/usr/sbin:/sbin"
   export HOME="$BATS_TEST_TMPDIR/home"
 }
 
 # ===========================================================================
-# bin/dc unit tests (T-022 – T-030) — stubs, no container required
+# install.sh — the `devc` host CLI (unit, stubbed; no container required)
 # ===========================================================================
 
-@test "T-022: build subcommand invokes devcontainer build --workspace-folder ." {
-  run "$DC" build
+@test "devc up: runs 'devcontainer up --workspace-folder <ws>'" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"
+  run bash "$INSTALL" up "$ws"
   [ "$status" -eq 0 ]
-  calls="$(stub_calls devcontainer)"
-  [[ "$calls" == *"build --workspace-folder ."* ]] || [[ "$calls" == *"build"* ]]
+  [[ "$(stub_calls devcontainer)" == *"up --workspace-folder $ws"* ]]
 }
 
-@test "T-022b: up subcommand calls devcontainer up --workspace-folder . without exec" {
-  run "$DC" up
-  [ "$status" -eq 0 ]
-  calls="$(stub_calls devcontainer)"
-  [[ "$calls" == *"up --workspace-folder ."* ]]
-  [[ "$calls" != *"exec"* ]]
-}
-
-@test "T-023: launch exits non-zero with clear error when docker is absent" {
-  rm "$BATS_TEST_TMPDIR/stubs/docker"
-  run "$DC" launch
+@test "devc up: refuses when devcontainer.json adds SYS_ADMIN to runArgs" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws/.devcontainer"
+  cat > "$ws/.devcontainer/devcontainer.json" <<'JSON'
+{ "runArgs": ["--cap-add", "SYS_ADMIN"] }
+JSON
+  run bash "$INSTALL" up "$ws"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"docker"* ]]
+  [[ "$output" == *"SYS_ADMIN"* ]]
 }
 
-@test "T-024: launch exits non-zero with clear error when keychain entry is missing" {
-  create_stub security 1 ""
-  run "$DC" launch
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"Claude Code-credentials"* ]]
-}
-
-@test "T-025: launch creates HOME/.claude and writes credential file with permissions 600" {
-  rm -rf "$HOME/.claude"
-  run "$DC" launch
+@test "devc up: proceeds when devcontainer.json has no SYS_ADMIN in runArgs" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws/.devcontainer"
+  cat > "$ws/.devcontainer/devcontainer.json" <<'JSON'
+{ "runArgs": ["--add-host=host.docker.internal:host-gateway"] }
+JSON
+  run bash "$INSTALL" up "$ws"
   [ "$status" -eq 0 ]
-  [ -f "$HOME/.claude/.credentials.json" ]
-  perms="$(/usr/bin/stat -f "%Lp" "$HOME/.claude/.credentials.json" 2>/dev/null \
-    || /usr/bin/stat -c "%a" "$HOME/.claude/.credentials.json" 2>/dev/null \
-    || stat -c "%a" "$HOME/.claude/.credentials.json")"
-  [ "$perms" = "600" ]
+  [[ "$(stub_calls devcontainer)" == *"up --workspace-folder $ws"* ]]
 }
 
-@test "T-026: launch overwrites existing credential file with current keychain value" {
-  echo '{"token":"old-token"}' > "$HOME/.claude/.credentials.json"
-  run "$DC" launch
+@test "devc rebuild: adds --remove-existing-container, not --build-no-cache" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"
+  run bash "$INSTALL" rebuild "$ws"
   [ "$status" -eq 0 ]
-  content="$(cat "$HOME/.claude/.credentials.json")"
-  [[ "$content" == *"test-token"* ]]
-  [[ "$content" != *"old-token"* ]]
+  local calls; calls="$(stub_calls devcontainer)"
+  [[ "$calls" == *"up --workspace-folder $ws"* ]]
+  [[ "$calls" == *"--remove-existing-container"* ]]
+  [[ "$calls" != *"--build-no-cache"* ]]
 }
 
-@test "T-030: launch calls devcontainer up then devcontainer exec bash" {
-  run "$DC" launch
+@test "devc rebuild --no-cache: adds --build-no-cache" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"
+  run bash "$INSTALL" rebuild --no-cache "$ws"
   [ "$status" -eq 0 ]
-  calls="$(stub_calls devcontainer)"
-  [[ "$calls" == *"up --workspace-folder ."* ]]
-  [[ "$calls" == *"exec --workspace-folder . bash"* ]]
+  local calls; calls="$(stub_calls devcontainer)"
+  [[ "$calls" == *"--remove-existing-container"* ]]
+  [[ "$calls" == *"--build-no-cache"* ]]
 }
 
-# ===========================================================================
-# initialize.sh — host-side docker-info probe (unit, no container required)
-# ===========================================================================
+@test "devc down: warns when no container is running" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"
+  run bash "$INSTALL" down "$ws"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No running devcontainer"* ]]
+}
 
-@test "initialize.sh exits non-zero when docker info fails" {
-  cat > "$BATS_TEST_TMPDIR/stubs/docker" <<'STUB'
+@test "devc down: stops the running container found by label" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"
+  # Custom docker stub: report a container id for `ps`, log every call.
+  cat > "$BATS_TEST_TMPDIR/stubs/docker" <<STUB
 #!/bin/sh
-if [ "$1" = "info" ]; then exit 1; fi
+echo "\$@" >> "$BATS_TEST_TMPDIR/calls/docker"
+if [ "\$1" = "ps" ]; then echo deadbeef; fi
 exit 0
 STUB
   chmod +x "$BATS_TEST_TMPDIR/stubs/docker"
-  run "$REPO_ROOT/.devcontainer/config/initialize.sh"
+  run bash "$INSTALL" down "$ws"
+  [ "$status" -eq 0 ]
+  [[ "$(stub_calls docker)" == *"stop deadbeef"* ]]
+}
+
+@test "devc template: installs the repo-root template into <dir>/.devcontainer" {
+  local dest="$BATS_TEST_TMPDIR/proj"; mkdir -p "$dest"
+  run bash "$INSTALL" template "$dest"
+  [ "$status" -eq 0 ]
+  [ -f "$dest/.devcontainer/devcontainer.json" ]
+  [ -f "$dest/.devcontainer/Dockerfile" ]
+  [ -f "$dest/.devcontainer/protected-paths" ]
+  [ -d "$dest/.devcontainer/config" ]
+  [ -d "$dest/.devcontainer/etc" ]
+  [ -d "$dest/.devcontainer/bin" ]
+  [ -f "$dest/.devcontainer/config/protect-paths" ]
+  [ -f "$dest/.devcontainer/etc/seccomp/hardened.json" ]
+}
+
+@test "devc exec: forwards the command to 'devcontainer exec'" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
+  run bash "$INSTALL" exec ls -la
+  [ "$status" -eq 0 ]
+  local calls; calls="$(stub_calls devcontainer)"
+  [[ "$calls" == *"exec --workspace-folder"* ]]
+  [[ "$calls" == *"ls -la"* ]]
+}
+
+@test "devc: unknown command exits non-zero and prints usage" {
+  run bash "$INSTALL" frobnicate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Unknown command"* ]]
+  [[ "$output" == *"Usage:"* ]]
+}
+
+@test "devc: no arguments prints usage and exits non-zero" {
+  run bash "$INSTALL"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Usage:"* ]]
+}
+
+# ===========================================================================
+# config/initialize.sh — host-side initializeCommand (unit, no container)
+# ===========================================================================
+
+@test "initialize.sh: exits non-zero when docker info fails" {
+  cat > "$BATS_TEST_TMPDIR/stubs/docker" <<'STUB'
+#!/bin/sh
+[ "$1" = "info" ] && exit 1
+exit 0
+STUB
+  chmod +x "$BATS_TEST_TMPDIR/stubs/docker"
+  run bash "$INITIALIZE"
   [ "$status" -ne 0 ]
   [[ "$output" == *"Docker"* ]] || [[ "$output" == *"docker"* ]]
 }
 
-@test "initialize.sh exits 0 when docker info succeeds" {
-  run "$REPO_ROOT/.devcontainer/config/initialize.sh"
+@test "initialize.sh: succeeds and seeds host placeholders when docker info passes" {
+  local ws="$BATS_TEST_TMPDIR/myproj"; mkdir -p "$ws"; cd "$ws"
+  run bash "$INITIALIZE"
+  [ "$status" -eq 0 ]
+  [ -f "$HOME/.claude.json" ]
+  [ -f "$HOME/.config/graphite/aliases" ]
+  [ -f "$HOME/.config/graphite/user_config" ]
+}
+
+@test "initialize.sh: seeds project settings.json with non-empty deny rules" {
+  local ws="$BATS_TEST_TMPDIR/myproj"; mkdir -p "$ws"; cd "$ws"
+  run bash "$INITIALIZE"
+  [ "$status" -eq 0 ]
+  local settings="$HOME/.claude/projects/-workspaces-myproj/settings.json"
+  [ -f "$settings" ]
+  run jq -e '.permissions.deny | length > 0' "$settings"
   [ "$status" -eq 0 ]
 }
 
+@test "initialize.sh: macOS keychain export writes credentials with 0600 perms" {
+  [ "$(uname)" = "Darwin" ] || skip "macOS keychain export only runs on Darwin"
+  run bash "$INITIALIZE"
+  [ "$status" -eq 0 ]
+  [ -f "$HOME/.claude/.credentials.json" ]
+  local perms; perms="$(/usr/bin/stat -f '%Lp' "$HOME/.claude/.credentials.json")"
+  [ "$perms" = "600" ]
+  [[ "$(cat "$HOME/.claude/.credentials.json")" == *"test-token"* ]]
+}
+
+@test "initialize.sh: keychain export overwrites a stale credentials file" {
+  [ "$(uname)" = "Darwin" ] || skip "macOS keychain export only runs on Darwin"
+  echo '{"token":"old-token"}' > "$HOME/.claude/.credentials.json"
+  run bash "$INITIALIZE"
+  [ "$status" -eq 0 ]
+  local content; content="$(cat "$HOME/.claude/.credentials.json")"
+  [[ "$content" == *"test-token"* ]]
+  [[ "$content" != *"old-token"* ]]
+}
+
+@test "initialize.sh: exits non-zero with a clear error when keychain entry is missing" {
+  [ "$(uname)" = "Darwin" ] || skip "macOS keychain export only runs on Darwin"
+  create_stub security 1 ""
+  run bash "$INITIALIZE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"credentials"* ]]
+}
+
 # ===========================================================================
-# protect-paths — pattern parsing & exclusion (unit, no container required)
+# config/protect-paths — pattern parsing & exclusion (unit, no container)
 # ===========================================================================
 #
 # protect-paths normally runs inside the devcontainer with CAP_SYS_ADMIN and
@@ -153,13 +260,11 @@ STUB
 # call with a recorder via PROTECT_PATHS_MASK_HOOK. Both env vars are honored
 # only by the script's testing seam — production behavior is unchanged.
 
-# Build a fake workspace at $1/<rel> populated with files declared in $2..,
-# create $1/.devcontainer/protected-paths from the heredoc, and run the
-# script. Records masked targets (relative to workspace root) into
-# $BATS_TEST_TMPDIR/masked.
+# Build a fake workspace at $1, write its .devcontainer/protected-paths from
+# $2, run the script, and record masked targets (relative to workspace root)
+# into $BATS_TEST_TMPDIR/masked.
 _pp_run() {
   local ws="$1" config="$2"
-  shift 2
   mkdir -p "$ws/.devcontainer"
   printf '%s\n' "$config" > "$ws/.devcontainer/protected-paths"
 
@@ -173,7 +278,7 @@ HOOK
 
   PROTECT_PATHS_WORKSPACE="$ws" \
     PROTECT_PATHS_MASK_HOOK="$BATS_TEST_TMPDIR/stubs/pp_record" \
-    bash "$REPO_ROOT/.devcontainer/config/protect-paths"
+    bash "$PROTECT_PATHS"
 }
 
 @test "T-PP-01: <dir>/** masks every file under the directory" {
@@ -278,15 +383,14 @@ CFG
 !../escape
 CFG
 
-  PROTECT_PATHS_WORKSPACE="$ws" \
-    run bash "$REPO_ROOT/.devcontainer/config/protect-paths"
+  PROTECT_PATHS_WORKSPACE="$ws" run bash "$PROTECT_PATHS"
   [ "$status" -eq 0 ]
   [[ "$output" == *"refusing exclusion '/etc/passwd'"* ]]
   [[ "$output" == *"refusing exclusion '../escape'"* ]]
 }
 
 # ===========================================================================
-# Integration lifecycle: adopt CONTAINER=... or launch via bin/dc up
+# Integration lifecycle: adopt CONTAINER=... or regenerate template + devc up
 # ===========================================================================
 
 setup_file() {
@@ -296,8 +400,11 @@ setup_file() {
   export OWN_CONTAINER=0
   export DC_WORKSPACE="/workspaces/$(basename "$REPO_ROOT")"
 
+  local install="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/install.sh"
+  local repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+
   if ! docker info &>/dev/null; then
-    INTEGRATION_SKIP_REASON="Docker Desktop is not running"
+    INTEGRATION_SKIP_REASON="Docker is not running"
     return 0
   fi
 
@@ -314,42 +421,57 @@ setup_file() {
     return 0
   fi
 
-  # Full lifecycle: ensure keychain, seed .env fixture, run bin/dc up.
-  if ! security find-generic-password -s "Claude Code-credentials" -w &>/dev/null; then
+  # Full lifecycle needs the devcontainer CLI and (on macOS) the keychain entry.
+  if ! command -v devcontainer &>/dev/null; then
+    INTEGRATION_SKIP_REASON="devcontainer CLI not installed on host"
+    return 0
+  fi
+  if [[ "$(uname)" == "Darwin" ]] \
+     && ! security find-generic-password -s "Claude Code-credentials" -w &>/dev/null; then
     INTEGRATION_SKIP_REASON="Keychain entry 'Claude Code-credentials' is missing"
     return 0
   fi
 
-  export PATH="$REAL_PATH"
-  export HOME="$REAL_HOME"
-
-  if [[ ! -f "$REPO_ROOT/.env" ]]; then
-    echo "SECRET=super-secret-value" > "$REPO_ROOT/.env"
+  # Seed a .env fixture so the protected-paths masking tests have a target.
+  if [[ ! -f "$repo_root/.env" ]]; then
+    echo "SECRET=super-secret-value" > "$repo_root/.env"
     DC_ENV_FIXTURE_CREATED=1
   fi
 
-  if ! (cd "$REPO_ROOT" && "$DC" up); then
-    INTEGRATION_SKIP_REASON="bin/dc up failed during setup_file"
+  # Regenerate .devcontainer/ from the repo-root template. The directory is
+  # gitignored / generated; remove any stale copy first so `devc template`
+  # does not hit its interactive overwrite prompt (a non-interactive read
+  # would abort the copy).
+  rm -rf "$repo_root/.devcontainer"
+  if ! bash "$install" template "$repo_root" >/dev/null 2>&1; then
+    INTEGRATION_SKIP_REASON="install.sh template failed during setup_file"
+    return 0
+  fi
+
+  if ! bash "$install" up "$repo_root" >/dev/null 2>&1; then
+    INTEGRATION_SKIP_REASON="devc up failed during setup_file"
     return 0
   fi
 
   OWN_CONTAINER=1
   DC_CONTAINER_ID=$(docker ps \
-    --filter "label=devcontainer.local_folder=$REPO_ROOT" \
+    --filter "label=devcontainer.local_folder=$repo_root" \
     --format '{{.ID}}' | head -1)
   if [[ -z "$DC_CONTAINER_ID" ]]; then
-    INTEGRATION_SKIP_REASON="bin/dc up completed but no container matches workspace label"
+    INTEGRATION_SKIP_REASON="devc up completed but no container matches workspace label"
   fi
   return 0
 }
 
 teardown_file() {
   [[ -n "$INTEGRATION_SKIP_REASON" ]] && return 0
-  export PATH="$REAL_PATH"
-  [[ "${DC_ENV_FIXTURE_CREATED:-0}" -eq 1 ]] && rm -f "$REPO_ROOT/.env"
+  local repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+  [[ "${DC_ENV_FIXTURE_CREATED:-0}" -eq 1 ]] && rm -f "$repo_root/.env"
   if [[ "${OWN_CONTAINER:-0}" -eq 1 ]]; then
-    docker ps -a --filter "label=devcontainer.local_folder=$REPO_ROOT" \
-      --format '{{.ID}}' | xargs -r docker rm -f &>/dev/null || true
+    while IFS= read -r cid; do
+      [[ -n "$cid" ]] && docker rm -f "$cid" &>/dev/null || true
+    done < <(docker ps -a --filter "label=devcontainer.local_folder=$repo_root" \
+               --format '{{.ID}}')
   fi
 }
 
@@ -375,10 +497,10 @@ dc_live_seccomp_json() {
 }
 
 # ===========================================================================
-# Container lifecycle (T-030i)
+# Container lifecycle
 # ===========================================================================
 
-@test "T-030i: container is running" {
+@test "lifecycle: container is running" {
   _integration_restore_env
   [ -n "$DC_CONTAINER_ID" ]
   run docker inspect --format '{{.State.Running}}' "$DC_CONTAINER_ID"
@@ -424,7 +546,7 @@ dc_live_seccomp_json() {
   [[ "$out" != *"/bin/mount"* ]]
 }
 
-@test "T-040 / PC-04: .env matched by protected-paths is empty inside container" {
+@test "PC-04: .env in the workspace is masked (empty) inside the container" {
   _integration_restore_env
   run dc_exec bash -c "wc -c < ${DC_WORKSPACE}/.env"
   [ "$status" -eq 0 ]
@@ -453,62 +575,6 @@ dc_live_seccomp_json() {
     [[ "$output" =~ ^[[:space:]]*0[[:space:]]*$ ]] \
       || { echo "expected ${DC_WORKSPACE}/$rel masked, got: '$output'"; return 1; }
   done
-}
-
-@test "PC-04: every non-template file in service secrets/ dirs is masked" {
-  _integration_restore_env
-  # Enumerate from the host because masked targets appear as character-
-  # special inside the container and would be skipped by `test -f`.
-  # `*.template.*` files are checked-in fixtures (empty placeholders) and
-  # are exempted by the `!**/*.template.*` rule in protected-paths.
-  local dir
-  local -i checked=0
-  for dir in temporal/secrets server/secrets apps/auth-webhook/secrets; do
-    [ -d "$REPO_ROOT/$dir" ] || continue
-    while IFS= read -r f; do
-      local rel="${f#$REPO_ROOT/}"
-      local base="${rel##*/}"
-      case "$base" in *.template.*) continue ;; esac
-      run dc_exec bash -c "wc -c < ${DC_WORKSPACE}/$rel"
-      [ "$status" -eq 0 ]
-      [[ "$output" =~ ^[[:space:]]*0[[:space:]]*$ ]] \
-        || { echo "expected ${DC_WORKSPACE}/$rel masked, got: '$output'"; return 1; }
-      checked+=1
-    done < <(find "$REPO_ROOT/$dir" -type f)
-  done
-  [ "$checked" -ge 1 ]
-}
-
-@test "PC-04: *.template.* files in service secrets/ dirs are NOT masked" {
-  _integration_restore_env
-  # Templates are checked-in fixtures (empty-shape JSON) needed for type
-  # inference, IDE help, and onboarding. They must remain readable.
-  local dir
-  local -i checked=0
-  for dir in temporal/secrets server/secrets apps/auth-webhook/secrets; do
-    [ -d "$REPO_ROOT/$dir" ] || continue
-    while IFS= read -r f; do
-      local rel="${f#$REPO_ROOT/}"
-      local host_bytes; host_bytes=$(wc -c < "$f" | tr -d '[:space:]')
-      run dc_exec bash -c "wc -c < ${DC_WORKSPACE}/$rel"
-      [ "$status" -eq 0 ]
-      local in_bytes; in_bytes=$(echo "$output" | tr -d '[:space:]')
-      [ "$in_bytes" = "$host_bytes" ] \
-        || { echo "expected ${DC_WORKSPACE}/$rel unmasked ($host_bytes bytes), got: '$in_bytes'"; return 1; }
-      checked+=1
-    done < <(find "$REPO_ROOT/$dir" -type f -name '*.template.*')
-  done
-  [ "$checked" -ge 1 ]
-}
-
-@test "PC-04: packages/secrets workspace package files are NOT masked" {
-  _integration_restore_env
-  # packages/secrets/ is a TS workspace package, not a secrets directory.
-  # If it were swept up by a naive **/secrets/ glob, the build would break.
-  run dc_exec bash -c "wc -c < ${DC_WORKSPACE}/packages/secrets/package.json"
-  [ "$status" -eq 0 ]
-  bytes="$(echo "$output" | tr -d '[:space:]')"
-  [ "$bytes" -gt 0 ]
 }
 
 # ===========================================================================
@@ -580,11 +646,10 @@ dc_live_seccomp_json() {
   [ "$status" -ne 0 ]
 }
 
-@test "PC-05: unshare --mount is blocked even via sudo (seccomp inherits)" {
+@test "PC-05: unshare --mount is blocked even as root (seccomp inherits)" {
   _integration_restore_env
-  # sudo alone isn't allowed for arbitrary commands, but sudoers lets us run
-  # protect-paths as root. Use docker exec -u 0 to reach root context without
-  # sudoers, then verify seccomp still blocks.
+  # sudoers does not allow arbitrary commands; reach root via docker exec -u 0
+  # to confirm seccomp still blocks namespace creation regardless of caps.
   run dc_exec_root unshare --mount true
   [ "$status" -ne 0 ]
 }
@@ -623,40 +688,41 @@ dc_live_seccomp_json() {
 # Credential Scoping (CS-01 .. CS-06)
 # ===========================================================================
 
-@test "T-031 / CS-01: credential file exists at /home/vscode/.claude/.credentials.json" {
+@test "CS-01: credential file exists at /home/vscode/.claude/.credentials.json" {
   _integration_restore_env
   run dc_exec test -f /home/vscode/.claude/.credentials.json
   [ "$status" -eq 0 ]
 }
 
-@test "T-032 / CS-01: credential file on host has permissions 600" {
+@test "CS-01: credential file on host has permissions 600" {
   _integration_restore_env
+  local perms
   perms="$(/usr/bin/stat -f "%Lp" "$REAL_HOME/.claude/.credentials.json" 2>/dev/null \
     || /usr/bin/stat -c "%a" "$REAL_HOME/.claude/.credentials.json" 2>/dev/null \
     || stat --format="%a" "$REAL_HOME/.claude/.credentials.json")"
   [ "$perms" = "600" ]
 }
 
-@test "T-033 / CS-01: writing to credential file inside container persists to host" {
+@test "CS-01: writing to the credential file inside the container persists to host" {
   _integration_restore_env
   local sentinel="integration-test-sentinel-$$"
   dc_exec bash -c "echo '$sentinel' >> /home/vscode/.claude/.credentials.json"
   grep -q "$sentinel" "$REAL_HOME/.claude/.credentials.json"
 }
 
-@test "T-034 / CS-04: Graphite config files readable inside container" {
+@test "CS-04: the shared agents config is bind-mounted into the container" {
   _integration_restore_env
-  if [[ -f "$REAL_HOME/.config/graphite/aliases" ]]; then
-    run dc_exec test -r /home/vscode/.config/graphite/aliases
-    [ "$status" -eq 0 ]
-  fi
-  if [[ -f "$REAL_HOME/.config/graphite/user_config" ]]; then
-    run dc_exec test -r /home/vscode/.config/graphite/user_config
-    [ "$status" -eq 0 ]
-  fi
+  run dc_exec test -d /home/vscode/.agents
+  [ "$status" -eq 0 ]
 }
 
-@test "CS-04: .gitconfig is bind-mounted into the container" {
+@test "CS-04: the Codex config is bind-mounted into the container" {
+  _integration_restore_env
+  run dc_exec test -d /home/vscode/.codex
+  [ "$status" -eq 0 ]
+}
+
+@test "CS-04: .gitconfig (bot identity) is bind-mounted into the container" {
   _integration_restore_env
   run dc_exec test -f /home/vscode/.gitconfig
   [ "$status" -eq 0 ]
@@ -665,42 +731,37 @@ dc_live_seccomp_json() {
   [ "$output" = "1" ]
 }
 
-@test "CS-04: .gitconfig mount is read-only" {
+@test "CS-04: SSH config (bot identity) is bind-mounted into the container" {
   _integration_restore_env
-  run dc_exec findmnt -no OPTIONS /home/vscode/.gitconfig
+  run dc_exec test -d /home/vscode/.ssh
   [ "$status" -eq 0 ]
-  [[ "$output" =~ (^|,)ro(,|$) ]]
 }
 
-@test "CS-04: graphite aliases mount is read-only" {
+@test "CS-04: gh config (bot identity) is bind-mounted into the container" {
   _integration_restore_env
-  if ! dc_exec test -f /home/vscode/.config/graphite/aliases; then
-    skip "graphite aliases not present on host; mount is conditional"
+  run dc_exec test -d /home/vscode/.config/gh
+  [ "$status" -eq 0 ]
+}
+
+@test "CS-04: Graphite config files are readable inside the container" {
+  _integration_restore_env
+  if dc_exec test -f /home/vscode/.config/graphite/aliases; then
+    run dc_exec test -r /home/vscode/.config/graphite/aliases
+    [ "$status" -eq 0 ]
   fi
-  run dc_exec findmnt -no OPTIONS /home/vscode/.config/graphite/aliases
-  [ "$status" -eq 0 ]
-  [[ "$output" =~ (^|,)ro(,|$) ]]
-}
-
-@test "CS-04: graphite user_config mount is read-write" {
-  # Sibling of the two RO assertions above — user_config must stay RW so
-  # `gt auth` token rotation persists back to the host.
-  _integration_restore_env
-  if ! dc_exec test -f /home/vscode/.config/graphite/user_config; then
-    skip "graphite user_config not present on host"
+  if dc_exec test -f /home/vscode/.config/graphite/user_config; then
+    run dc_exec test -r /home/vscode/.config/graphite/user_config
+    [ "$status" -eq 0 ]
   fi
-  run dc_exec findmnt -no OPTIONS /home/vscode/.config/graphite/user_config
-  [ "$status" -eq 0 ]
-  [[ "$output" =~ (^|,)rw(,|$) ]]
 }
 
-@test "T-042 / CS-05: host paths outside repo/mounts are inaccessible from container" {
+@test "CS-05: host paths outside repo/mounts are inaccessible from container" {
   _integration_restore_env
   run dc_exec test -d /Users
   [ "$status" -ne 0 ]
 }
 
-@test "CS-03: docker socket is not present inside container" {
+@test "CS-03: docker socket is not present inside the container" {
   _integration_restore_env
   run dc_exec test -e /var/run/docker.sock
   [ "$status" -ne 0 ]
@@ -718,7 +779,7 @@ dc_live_seccomp_json() {
 # Network Isolation (NI-01 .. NI-04)
 # ===========================================================================
 
-@test "T-035 / NI-01: curl to a non-allowlisted domain is blocked" {
+@test "NI-01: curl to a non-allowlisted domain is blocked" {
   _integration_restore_env
   run dc_exec curl --max-time 10 --silent --fail https://example.com
   [ "$status" -ne 0 ]
@@ -727,6 +788,17 @@ dc_live_seccomp_json() {
 @test "NI-02: HTTPS to allowlisted api.anthropic.com via proxy completes a TLS round-trip" {
   _integration_restore_env
   run dc_exec curl --max-time 15 --silent -o /dev/null -w "%{http_code}" https://api.anthropic.com
+  [ "$status" -eq 0 ]
+  [[ "$output" != "000" ]]
+}
+
+@test "NI-02: HTTPS to allowlisted chatgpt.com via proxy completes a TLS round-trip" {
+  # codex's built-in codex_apps MCP handshakes with chatgpt.com on startup;
+  # .chatgpt.com is allowlisted so the proxy permits it. A real HTTP status
+  # (not 000) proves squid completed the CONNECT and TLS round-trip — the
+  # status itself may be 403/405 from ChatGPT, which is fine here.
+  _integration_restore_env
+  run dc_exec curl --max-time 15 --silent -o /dev/null -w "%{http_code}" https://chatgpt.com
   [ "$status" -eq 0 ]
   [[ "$output" != "000" ]]
 }
@@ -747,21 +819,18 @@ dc_live_seccomp_json() {
   run dc_exec curl --max-time 15 --silent -o /dev/null \
     -w "%{http_code}\n%{remote_ip}\n" https://api.anthropic.com
   [ "$status" -eq 0 ]
-  # First line is the HTTP status; must not be 000 (curl failed before response).
+  local http_code remote_ip
   http_code="$(printf '%s\n' "$output" | sed -n '1p')"
   remote_ip="$(printf '%s\n' "$output" | sed -n '2p')"
   [[ "$http_code" != "000" ]]
-  # %{remote_ip} is the peer the local socket connected to (the proxy on
-  # 127.0.0.1), so the proof of DNS is that curl got a real HTTP response
-  # back from squid for a hostname URL.
   [ -n "$remote_ip" ]
 }
 
 # ===========================================================================
-# Required CLIs (T-036, T-037)
+# Required tooling & shell environment
 # ===========================================================================
 
-@test "T-036: claude --version succeeds inside container" {
+@test "tooling: claude --version succeeds inside the container" {
   # Claude installs a symlink in ~/.local/bin, which is only added to PATH
   # by the default Ubuntu ~/.profile on login. Use a login shell to match
   # the environment an interactive user (or `devcontainer exec bash`) gets.
@@ -770,8 +839,28 @@ dc_live_seccomp_json() {
   [ "$status" -eq 0 ]
 }
 
-@test "T-037: gt --version succeeds inside container" {
+@test "tooling: gt --version succeeds inside the container" {
   _integration_restore_env
   run dc_exec gt --version
+  [ "$status" -eq 0 ]
+}
+
+@test "tooling: gh --version succeeds inside the container" {
+  _integration_restore_env
+  run dc_exec gh --version
+  [ "$status" -eq 0 ]
+}
+
+@test "tooling: codex --version succeeds inside the container" {
+  _integration_restore_env
+  run dc_exec codex --version
+  [ "$status" -eq 0 ]
+}
+
+@test "shell env: omlx/ollama/yolo launcher functions are written to ~/.bashrc" {
+  _integration_restore_env
+  run dc_exec bash -c 'grep -q "yolo()" ~/.bashrc \
+    && grep -q "omlx()" ~/.bashrc \
+    && grep -q "ollama()" ~/.bashrc'
   [ "$status" -eq 0 ]
 }
