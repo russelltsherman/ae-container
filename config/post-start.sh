@@ -46,12 +46,14 @@ if [[ -f "$GITHUB_TOKEN_FILE" ]]; then
   GH_TOKEN="$(head -n 1 "$GITHUB_TOKEN_FILE")"
   echo "$GH_TOKEN" | gh auth login --with-token \
     || echo "warning: gh auth failed (check token / proxy)" >&2
+  echo "Authenticated with Github"
 fi
 
 # authenticate gt cli
 GRAPHITE_TOKEN_FILE="/home/vscode/.config/graphite/token"
 if [[ -f "$GRAPHITE_TOKEN_FILE" ]]; then
   GT_TOKEN="$(head -n 1 "$GRAPHITE_TOKEN_FILE")"
-  gt auth --token "$GT_TOKEN" \
+  timeout 10 gt auth --token "$GT_TOKEN" \
     || echo "warning: gt auth failed (check token / proxy)" >&2
+  echo "Authenticated with Graphite"
 fi
