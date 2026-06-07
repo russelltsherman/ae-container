@@ -31,7 +31,6 @@ RUN npm install -g \
     @openai/codex@0.137.0 \
     @devcontainers/cli@0.87.0 \
     @withgraphite/graphite-cli@1.8.6 \
-    yarn@1.22.22 \
     && npm cache clean --force
 
 # Copy squid configuration files into the image
