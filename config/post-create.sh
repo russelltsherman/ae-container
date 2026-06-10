@@ -33,6 +33,14 @@ echo 'yolo() { clear; command claude --dangerously-skip-permissions "$@"; printf
 #   - Disable attribution header and non-essential traffic
 #   - Override all model slots so Claude Code doesn't request unavailable models
 # Set OMLX_MODEL on the host to the model id you want (e.g. "qwen3-32b-4bit").
+# Per-tier overrides: OMLX_OPUS_MODEL / OMLX_SONNET_MODEL / OMLX_HAIKU_MODEL map
+# each Claude tier to a distinct omlx model id (so opus can run a larger model
+# than haiku). Any tier left unset falls back to OMLX_MODEL. Subagents follow the
+# sonnet/workhorse tier. ':-' treats an empty value (devcontainer.json forwards
+# an unset host var as "") as absent, so an unset tier falls back rather than
+# blanking its slot. With no model var set at all, the slots are left to Claude's
+# defaults — which 404 against omlx, the loud failure we want over a silent wrong
+# model.
 cat >> ~/.bashrc << 'BASHRC'
 omlx() {
   clear
@@ -44,17 +52,13 @@ omlx() {
     API_TIMEOUT_MS=3000000
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
   )
-  if [[ -n "${OMLX_MODEL:-}" ]]; then
-    _env+=(
-      ANTHROPIC_DEFAULT_OPUS_MODEL="$OMLX_MODEL"
-      ANTHROPIC_DEFAULT_SONNET_MODEL="$OMLX_MODEL"
-      ANTHROPIC_DEFAULT_HAIKU_MODEL="$OMLX_MODEL"
-      CLAUDE_CODE_SUBAGENT_MODEL="$OMLX_MODEL"
-    )
-    if [[ -n "${OMLX_CONTEXT_WINDOW:-}" ]]; then
-      _env+=(CLAUDE_CODE_AUTO_COMPACT_WINDOW="$OMLX_CONTEXT_WINDOW")
-    fi
-  fi
+  local _opus="${OMLX_OPUS_MODEL:-${OMLX_MODEL:-}}"
+  local _sonnet="${OMLX_SONNET_MODEL:-${OMLX_MODEL:-}}"
+  local _haiku="${OMLX_HAIKU_MODEL:-${OMLX_MODEL:-}}"
+  [[ -n "$_opus" ]]   && _env+=(ANTHROPIC_DEFAULT_OPUS_MODEL="$_opus")
+  [[ -n "$_sonnet" ]] && _env+=(ANTHROPIC_DEFAULT_SONNET_MODEL="$_sonnet" CLAUDE_CODE_SUBAGENT_MODEL="$_sonnet")
+  [[ -n "$_haiku" ]]  && _env+=(ANTHROPIC_DEFAULT_HAIKU_MODEL="$_haiku")
+  [[ -n "${OMLX_CONTEXT_WINDOW:-}" ]] && _env+=(CLAUDE_CODE_AUTO_COMPACT_WINDOW="$OMLX_CONTEXT_WINDOW")
   env "${_env[@]}" claude "$@"
   printf '\x1b[>0u'
 }

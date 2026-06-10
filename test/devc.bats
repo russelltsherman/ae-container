@@ -926,3 +926,93 @@ dc_live_seccomp_json() {
     && grep -q "ollama()" ~/.bashrc'
   [ "$status" -eq 0 ]
 }
+
+# ===========================================================================
+# config/post-create.sh — omlx() per-tier model resolution (unit, no container)
+# ===========================================================================
+#
+# The omlx() launcher is defined as literal text inside a heredoc in
+# post-create.sh. We extract just that function with sed (range from the
+# `omlx() {` opener to its column-0 closing brace), source it, and replace the
+# `claude` binary with a stub that dumps its environment. Asserting on that env
+# dump verifies which ANTHROPIC_DEFAULT_*_MODEL / CLAUDE_CODE_SUBAGENT_MODEL
+# values each combination of OMLX_*_MODEL vars resolves to — without a
+# container, a real claude, or post-create's git side effects.
+
+POST_CREATE="$REPO_ROOT/config/post-create.sh"
+
+# Extract omlx() to a sourceable file and install a claude stub that prints its
+# environment to stdout. The stub uses `env` so every VAR=val the function
+# passes through `env "${_env[@]}" claude` is observable.
+_load_omlx() {
+  sed -n '/^omlx() {/,/^}/p' "$POST_CREATE" > "$BATS_TEST_TMPDIR/omlx.sh"
+  printf '#!/bin/sh\nenv\n' > "$BATS_TEST_TMPDIR/stubs/claude"
+  chmod +x "$BATS_TEST_TMPDIR/stubs/claude"
+}
+
+# Run omlx() with the given VAR=val assignments exported into its environment,
+# capturing the stub's env dump in $output. TERM=dumb keeps the function's
+# `clear` quiet; </dev/null guards against any read. The leading -u flags clear
+# any OMLX_*/model-slot vars inherited from the test runner's own shell (the
+# host may itself export OMLX_MODEL etc.) so each test fully controls its inputs.
+_run_omlx() {
+  run env \
+    -u OMLX_MODEL -u OMLX_OPUS_MODEL -u OMLX_SONNET_MODEL -u OMLX_HAIKU_MODEL \
+    -u OMLX_CONTEXT_WINDOW \
+    -u ANTHROPIC_DEFAULT_OPUS_MODEL -u ANTHROPIC_DEFAULT_SONNET_MODEL \
+    -u ANTHROPIC_DEFAULT_HAIKU_MODEL -u CLAUDE_CODE_SUBAGENT_MODEL \
+    TERM=dumb "$@" bash -c \
+    'source "'"$BATS_TEST_TMPDIR"'/omlx.sh"; omlx </dev/null'
+}
+
+@test "omlx: per-tier vars drive their own ANTHROPIC_DEFAULT_*_MODEL slots" {
+  _load_omlx
+  _run_omlx OMLX_MODEL=base \
+            OMLX_OPUS_MODEL=opus-x \
+            OMLX_SONNET_MODEL=sonnet-y \
+            OMLX_HAIKU_MODEL=haiku-z
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ANTHROPIC_DEFAULT_OPUS_MODEL=opus-x"* ]]
+  [[ "$output" == *"ANTHROPIC_DEFAULT_SONNET_MODEL=sonnet-y"* ]]
+  [[ "$output" == *"ANTHROPIC_DEFAULT_HAIKU_MODEL=haiku-z"* ]]
+  # Subagents follow the sonnet/workhorse tier.
+  [[ "$output" == *"CLAUDE_CODE_SUBAGENT_MODEL=sonnet-y"* ]]
+}
+
+@test "omlx: unset per-tier vars fall back to OMLX_MODEL on every slot" {
+  _load_omlx
+  _run_omlx OMLX_MODEL=base
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ANTHROPIC_DEFAULT_OPUS_MODEL=base"* ]]
+  [[ "$output" == *"ANTHROPIC_DEFAULT_SONNET_MODEL=base"* ]]
+  [[ "$output" == *"ANTHROPIC_DEFAULT_HAIKU_MODEL=base"* ]]
+  [[ "$output" == *"CLAUDE_CODE_SUBAGENT_MODEL=base"* ]]
+}
+
+@test "omlx: a per-tier var overrides OMLX_MODEL only for its own slot" {
+  _load_omlx
+  _run_omlx OMLX_MODEL=base OMLX_OPUS_MODEL=opus-x
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ANTHROPIC_DEFAULT_OPUS_MODEL=opus-x"* ]]
+  [[ "$output" == *"ANTHROPIC_DEFAULT_SONNET_MODEL=base"* ]]
+  [[ "$output" == *"ANTHROPIC_DEFAULT_HAIKU_MODEL=base"* ]]
+}
+
+@test "omlx: an empty (forwarded-but-unset) per-tier var falls back, not blanks" {
+  # devcontainer.json forwards ${localEnv:OMLX_OPUS_MODEL} as "" when the host
+  # var is unset; ':-' must treat empty as absent so the slot is not blanked.
+  _load_omlx
+  _run_omlx OMLX_MODEL=base OMLX_OPUS_MODEL=
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ANTHROPIC_DEFAULT_OPUS_MODEL=base"* ]]
+}
+
+@test "omlx: with no model vars set, no model slots are emitted" {
+  _load_omlx
+  _run_omlx
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ANTHROPIC_DEFAULT_OPUS_MODEL="* ]]
+  [[ "$output" != *"ANTHROPIC_DEFAULT_SONNET_MODEL="* ]]
+  [[ "$output" != *"ANTHROPIC_DEFAULT_HAIKU_MODEL="* ]]
+  [[ "$output" != *"CLAUDE_CODE_SUBAGENT_MODEL="* ]]
+}

@@ -14,11 +14,16 @@
     "NO_PROXY": "host.docker.internal",
     // OMLX local model server on the host. Forwarded to the omlx/omlx-yolo
     // shell functions which replicate the env that `omlx launch claude` sets.
-    // OMLX_MODEL is required — set it to the model id loaded in omlx
-    // (e.g. "qwen3-32b-4bit"). OMLX_CONTEXT_WINDOW is optional.
+    // OMLX_MODEL is the base/default model id loaded in omlx (e.g.
+    // "qwen3-32b-4bit"). OMLX_OPUS_MODEL / OMLX_SONNET_MODEL / OMLX_HAIKU_MODEL
+    // optionally map each Claude tier to a distinct model id; any tier left
+    // unset falls back to OMLX_MODEL. OMLX_CONTEXT_WINDOW is optional.
     "OMLX_API_KEY": "${localEnv:OMLX_API_KEY}",
     "OMLX_PORT": "${localEnv:OMLX_PORT}",
     "OMLX_MODEL": "${localEnv:OMLX_MODEL}",
+    "OMLX_OPUS_MODEL": "${localEnv:OMLX_OPUS_MODEL}",
+    "OMLX_SONNET_MODEL": "${localEnv:OMLX_SONNET_MODEL}",
+    "OMLX_HAIKU_MODEL": "${localEnv:OMLX_HAIKU_MODEL}",
     "OMLX_CONTEXT_WINDOW": "${localEnv:OMLX_CONTEXT_WINDOW}",
 
     // Ollama local model server on the host. Forwarded to the ollama/ollama-yolo
