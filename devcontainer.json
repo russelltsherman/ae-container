@@ -38,7 +38,7 @@
     "OLLAMA_API_KEY": "${localEnv:OLLAMA_API_KEY}"
   },
 
-  "initializeCommand": "bash .devcontainer/config/initialize.sh",
+  "initializeCommand": "bash .devcontainer/scripts/initialize.sh",
 
   "mounts": [
     // Mount host config repos for each AI coding tool so credentials
@@ -61,7 +61,10 @@
     "source=${localEnv:HOME}/.bot/gh,target=/home/vscode/.config/gh,type=bind",
 
     // Graphite config (bot identity)
-    "source=${localEnv:HOME}/.bot/graphite/,target=/home/vscode/.config/graphite/,type=bind"
+    "source=${localEnv:HOME}/.bot/graphite/,target=/home/vscode/.config/graphite/,type=bind",
+
+    // SSH token (bot identity)
+    "source=${localEnv:HOME}/.bot/ssh,target=/home/vscode/.ssh,type=bind"
 
     // Paths listed in .devcontainer/protected-paths are shadowed from inside
     // the container at startup by /usr/local/sbin/protect-paths. See
@@ -89,8 +92,8 @@
     "--add-host=host.docker.internal:host-gateway"
   ],
 
-  "postCreateCommand": "bash .devcontainer/config/post-create.sh",
-  "postStartCommand": "bash .devcontainer/config/post-start.sh",
+  "postCreateCommand": "bash .devcontainer/scripts/post-create.sh",
+  "postStartCommand": "bash .devcontainer/scripts/post-start.sh",
 
   "remoteUser": "vscode",
 

@@ -1016,3 +1016,93 @@ _run_omlx() {
   [[ "$output" != *"ANTHROPIC_DEFAULT_HAIKU_MODEL="* ]]
   [[ "$output" != *"CLAUDE_CODE_SUBAGENT_MODEL="* ]]
 }
+
+# ===========================================================================
+# config/post-create.sh — git insteadOf rewrite for egress-locked submit (unit)
+# ===========================================================================
+#
+# Egress is locked to the squid proxy: port 22 / direct DNS are blocked, so all
+# git traffic must traverse https through the proxy. The bot gitconfig rewrites
+# the URL form (ssh://git@github.com/) but NOT the scp-shorthand form
+# (git@github.com:owner/repo) that real remotes use — so post-create.sh adds the
+# scp-shorthand `url.<https>.insteadOf` to the XDG git config. Without it,
+# `git fetch`/`push` and therefore `gt submit` fall through to real SSH and fail.
+#
+# These tests apply post-create.sh's *actual* XDG git-config commands to an
+# isolated HOME (extracted verbatim, so the test can't drift from the source),
+# then assert `git ls-remote --get-url` — which expands url.insteadOf and exits
+# without touching the network — produces the rewritten https URL.
+
+# Apply every `git config --file ~/.config/git/config ...` command from
+# post-create.sh into an isolated $HOME. sed collapses backslash line
+# continuations first; ~ then expands against the overridden HOME.
+_apply_post_create_gitconfig() {
+  export HOME="$BATS_TEST_TMPDIR/githome"
+  mkdir -p "$HOME/.config/git"
+  local cmd
+  while IFS= read -r cmd; do
+    eval "$cmd"
+  done < <(sed -e ':a' -e '/\\$/{N;s/\\\n//;ba}' "$POST_CREATE" \
+            | grep '^git config --file ~/\.config/git/config')
+}
+
+@test "post-create gitconfig: scp-shorthand github remote rewrites to https" {
+  _apply_post_create_gitconfig
+  cd "$BATS_TEST_TMPDIR"
+  git init -q rewrite-scp && cd rewrite-scp
+  git remote add origin git@github.com:owner/name.git
+  # --get-url expands url.insteadOf and exits without network access.
+  run git ls-remote --get-url origin
+  [ "$status" -eq 0 ]
+  [ "$output" = "https://github.com/owner/name.git" ]
+}
+
+@test "post-create gitconfig: ssh-url-form github remote also rewrites to https" {
+  # post-create.sh now carries the URL-form rule itself (RUS-65), so it no longer
+  # depends on the host bot ~/.gitconfig bind mount. Assert the rule applied from
+  # post-create.sh alone rewrites the ssh:// URL form to https.
+  _apply_post_create_gitconfig
+  cd "$BATS_TEST_TMPDIR"
+  git init -q rewrite-url && cd rewrite-url
+  git remote add origin ssh://git@github.com/owner/name.git
+  run git ls-remote --get-url origin
+  [ "$status" -eq 0 ]
+  [ "$output" = "https://github.com/owner/name.git" ]
+}
+
+@test "post-create gitconfig: scp-shorthand for non-github host is left untouched" {
+  # The rewrite must be host-specific: a gitlab scp remote must NOT be rerouted
+  # through the github https base.
+  _apply_post_create_gitconfig
+  cd "$BATS_TEST_TMPDIR"
+  git init -q rewrite-other && cd rewrite-other
+  git remote add origin git@gitlab.com:owner/name.git
+  run git ls-remote --get-url origin
+  [ "$status" -eq 0 ]
+  [ "$output" = "git@gitlab.com:owner/name.git" ]
+}
+
+# ===========================================================================
+# config/post-start.sh — gh registered as git credential helper (static)
+# ===========================================================================
+#
+# `gh auth login --with-token` stores the token but, unlike gh's interactive
+# flow, does NOT run setup-git — so https git pushes (and `gt submit`) would
+# have no credential helper and fail under the egress guard (RUS-65). post-start
+# must therefore call `gh auth setup-git`, and it must come AFTER `gh auth login`
+# (setup-git writes a helper for the logged-in account; ordering it before login
+# would configure nothing). This can't run hermetically (needs gh + network +
+# root), so we assert the source carries the call in the correct order — guarding
+# against someone dropping or reordering the line.
+
+POST_START="$REPO_ROOT/config/post-start.sh"
+
+@test "post-start: runs gh auth setup-git after gh auth login" {
+  grep -q 'gh auth setup-git' "$POST_START"
+  local login_line setup_line
+  login_line="$(grep -n 'gh auth login' "$POST_START" | head -n1 | cut -d: -f1)"
+  setup_line="$(grep -n 'gh auth setup-git' "$POST_START" | head -n1 | cut -d: -f1)"
+  [ -n "$login_line" ]
+  [ -n "$setup_line" ]
+  [ "$setup_line" -gt "$login_line" ]
+}

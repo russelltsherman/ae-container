@@ -210,9 +210,11 @@ cmd_template() {
   mkdir -p "$devcontainer_dir"
 
   # Copy template files
+  cp -r "$SCRIPT_DIR/bin" "$devcontainer_dir/"
   cp -r "$SCRIPT_DIR/config" "$devcontainer_dir/"
   cp -r "$SCRIPT_DIR/etc" "$devcontainer_dir/"
-  cp -r "$SCRIPT_DIR/bin" "$devcontainer_dir/"
+  cp -r "$SCRIPT_DIR/scripts" "$devcontainer_dir/"
+  cp -r "$SCRIPT_DIR/usr" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/Dockerfile" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/devcontainer.json" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/protected-paths" "$devcontainer_dir/"

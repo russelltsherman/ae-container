@@ -39,9 +39,9 @@ COPY etc/squid/squid.conf /etc/squid/squid.conf
 COPY etc/squid/allowlist.conf /etc/squid/allowlist.conf
 
 # Copy security init scripts into the image
-COPY config/protect-egress /usr/local/sbin/protect-egress
-COPY config/protect-paths /usr/local/sbin/protect-paths
-COPY config/start-squid /usr/local/sbin/start-squid
+COPY usr/local/sbin/protect-egress /usr/local/sbin/protect-egress
+COPY usr/local/sbin/protect-paths /usr/local/sbin/protect-paths
+COPY usr/local/sbin/start-squid /usr/local/sbin/start-squid
 RUN chmod 0755 /usr/local/sbin/protect-egress /usr/local/sbin/protect-paths /usr/local/sbin/start-squid
 
 # Initialise the squid on-disk cache structure so it is ready when
@@ -51,7 +51,7 @@ RUN squid -z && rm -f /run/squid.pid /var/run/squid.pid
 # Welcome banner: static ASCII art baked into the image; allowlist section
 # is generated dynamically at shell start from the live allowlist.conf.
 COPY etc/motd /etc/motd
-COPY config/show-motd /usr/local/bin/show-motd
+COPY usr/local/bin/show-motd /usr/local/bin/show-motd
 RUN chmod 0755 /usr/local/bin/show-motd \
     && echo '[ -x /usr/local/bin/show-motd ] && /usr/local/bin/show-motd' >> /etc/bash.bashrc
 

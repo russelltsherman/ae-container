@@ -46,6 +46,14 @@ if [[ -f "$GITHUB_TOKEN_FILE" ]]; then
   GH_TOKEN="$(head -n 1 "$GITHUB_TOKEN_FILE")"
   echo "$GH_TOKEN" | gh auth login --with-token \
     || echo "warning: gh auth failed (check token / proxy)" >&2
+  # Register gh as git's credential helper so https pushes (and `gt submit`, which
+  # shells out to `git push`) authenticate with the gh token. `gh auth login
+  # --with-token` stores the token but, unlike the interactive flow, does NOT run
+  # setup-git, so without this the insteadOf-rewritten https remotes would prompt
+  # for credentials and fail under the egress guard (RUS-65). Convenience step:
+  # warn instead of aborting so a setup-git hiccup can't brick container start.
+  gh auth setup-git \
+    || echo "warning: gh auth setup-git failed (https git push may prompt)" >&2
   echo "Authenticated with Github"
 fi
 
