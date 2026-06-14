@@ -1,0 +1,44 @@
+# Global git excludes for the devcontainer.
+#
+# The Dockerfile copies config/ -> /home/vscode/.config, so this lands at
+# ~/.config/git/ignore — git's XDG default core.excludesFile. No git config
+# entry is needed; git reads this path automatically.
+#
+# This mirrors the host ~/.config/git/ignore, minus the macOS-only filesystem
+# junk (.DS_Store, ._*, .Spotlight-V100, ...) which has no meaning on Linux.
+
+# example / scratch directories
+.EXAMP**
+.TEST**
+RESOURCE**
+
+# TODO / NOTE files
+TODO**
+NOTE**
+
+# per-repo local excludes
+.localgitignore
+
+# direnv / local env
+.direnv
+.env
+.envrc
+.vars
+.secrets
+
+# vim swap/backup files
+*~
+*.swp
+*.swo
+
+# vscode project config
+.vscode/*
+
+# Claude Code local settings
+**/.claude/settings.local.json
+
+# local git worktrees
+.worktrees/*
+
+# project-level agent memory
+.memsearch/**

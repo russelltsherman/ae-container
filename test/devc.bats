@@ -1083,6 +1083,75 @@ _apply_post_create_gitconfig() {
 }
 
 # ===========================================================================
+# config/git/ignore — global excludes at the XDG default path (unit, no container)
+# ===========================================================================
+#
+# The Dockerfile copies config/ -> /home/vscode/.config, so config/git/ignore
+# lands at ~/.config/git/ignore — git's XDG-default core.excludesFile (neither
+# the baked config/git/config nor the bot ~/.gitconfig sets core.excludesFile,
+# so git falls back to this path automatically). These tests reproduce that
+# mechanism hermetically: stage the repo's config/git/ignore at
+# $HOME/.config/git/ignore in an isolated HOME, then assert `git check-ignore`
+# matches the intended patterns via the global excludes alone.
+#
+# GIT_CONFIG_NOSYSTEM=1 + an empty XDG_CONFIG_HOME-free HOME guarantee the only
+# excludesFile in play is the staged copy, so a host /etc system gitconfig can't
+# mask the XDG default and silently pass/fail the test.
+
+GIT_IGNORE="$REPO_ROOT/config/git/ignore"
+
+# Stage config/git/ignore at the container's runtime path inside an isolated
+# HOME and init a repo at $GLOBAL_IGNORE_REPO. Must be called directly (not in
+# a command substitution) so its `export HOME` reaches the test shell.
+_stage_global_ignore() {
+  export HOME="$BATS_TEST_TMPDIR/gitignhome"
+  mkdir -p "$HOME/.config/git"
+  cp "$GIT_IGNORE" "$HOME/.config/git/ignore"
+  export GLOBAL_IGNORE_REPO="$HOME/repo"
+  git init -q "$GLOBAL_IGNORE_REPO"
+}
+
+# git check-ignore against the staged global excludes only (no system config).
+_check_ignore() {
+  env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
+    git -C "$GLOBAL_IGNORE_REPO" check-ignore -q -- "$1"
+}
+
+@test "global ignore: TODO.md is ignored via the XDG-default excludes file" {
+  _stage_global_ignore
+  run _check_ignore "TODO.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "global ignore: nested .claude/settings.local.json is ignored" {
+  _stage_global_ignore
+  run _check_ignore "sub/dir/.claude/settings.local.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "global ignore: workflow patterns (.env, *.swp, .worktrees) all match" {
+  _stage_global_ignore
+  for p in .env app/.env config.swp .worktrees/feature NOTE.txt .direnv; do
+    run _check_ignore "$p"
+    [ "$status" -eq 0 ] || { echo "expected '$p' ignored"; return 1; }
+  done
+}
+
+@test "global ignore: a normal tracked file is NOT ignored" {
+  _stage_global_ignore
+  run _check_ignore "README.md"
+  [ "$status" -ne 0 ]
+}
+
+@test "global ignore: macOS-only junk (.DS_Store) is NOT carried into the container excludes" {
+  # The container file deliberately drops the host's macOS section; assert it
+  # stayed dropped so the file's scope doesn't silently regrow.
+  _stage_global_ignore
+  run _check_ignore ".DS_Store"
+  [ "$status" -ne 0 ]
+}
+
+# ===========================================================================
 # config/post-start.sh — gh registered as git credential helper (static)
 # ===========================================================================
 #
