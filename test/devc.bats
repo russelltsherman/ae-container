@@ -2,18 +2,18 @@
 # test/devc.bats — consolidated devcontainer test suite.
 #
 # The repository is a devcontainer *template*: the canonical sources live at
-# the repo root (config/, etc/, bin/, Dockerfile, devcontainer.json,
-# protected-paths) and install.sh's `devc template` copies them into a target
-# project's .devcontainer/ (which is gitignored / generated).
+# the repo root (config/, scripts/, usr/, etc/, bin/, Dockerfile,
+# devcontainer.json, protected-paths) and install.sh's `devc template` copies
+# them into a target project's .devcontainer/ (which is gitignored / generated).
 #
 # Layers (mirrors the host-side / in-container split):
 #
 #   UNIT (no container, stubbed) — target the repo-root sources:
 #     - install.sh            the `devc` host CLI (up/rebuild/down/template/...)
-#     - config/initialize.sh  host-side initializeCommand: docker probe, macOS
+#     - scripts/initialize.sh host-side initializeCommand: docker probe, macOS
 #                             keychain export, project settings seeding,
 #                             mount-source placeholder creation
-#     - config/protect-paths  protected-paths pattern parser / exclusions
+#     - usr/local/sbin/protect-paths  protected-paths pattern parser / exclusions
 #
 #   INTEGRATION (live container) — runtime invariants via docker inspect/exec:
 #     Privilege Containment (PC-*), Credential Scoping (CS-*), Network
@@ -36,9 +36,9 @@
 
 REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 INSTALL="$REPO_ROOT/install.sh"
-INITIALIZE="$REPO_ROOT/config/initialize.sh"
-PROTECT_PATHS="$REPO_ROOT/config/protect-paths"
-PROTECT_EGRESS="$REPO_ROOT/config/protect-egress"
+INITIALIZE="$REPO_ROOT/scripts/initialize.sh"
+PROTECT_PATHS="$REPO_ROOT/usr/local/sbin/protect-paths"
+PROTECT_EGRESS="$REPO_ROOT/usr/local/sbin/protect-egress"
 
 # Save real PATH/HOME before per-test setup() swaps them for stubs.
 REAL_PATH="$PATH"
@@ -162,7 +162,9 @@ STUB
   [ -d "$dest/.devcontainer/config" ]
   [ -d "$dest/.devcontainer/etc" ]
   [ -d "$dest/.devcontainer/bin" ]
-  [ -f "$dest/.devcontainer/config/protect-paths" ]
+  [ -d "$dest/.devcontainer/scripts" ]
+  [ -d "$dest/.devcontainer/usr" ]
+  [ -f "$dest/.devcontainer/usr/local/sbin/protect-paths" ]
   [ -f "$dest/.devcontainer/etc/seccomp/hardened.json" ]
 }
 
@@ -189,7 +191,7 @@ STUB
 }
 
 # ===========================================================================
-# config/initialize.sh — host-side initializeCommand (unit, no container)
+# scripts/initialize.sh — host-side initializeCommand (unit, no container)
 # ===========================================================================
 
 @test "initialize.sh: exits non-zero when docker info fails" {
@@ -252,7 +254,7 @@ STUB
 }
 
 # ===========================================================================
-# config/protect-paths — pattern parsing & exclusion (unit, no container)
+# usr/local/sbin/protect-paths — pattern parsing & exclusion (unit, no container)
 # ===========================================================================
 #
 # protect-paths normally runs inside the devcontainer with CAP_SYS_ADMIN and
@@ -391,7 +393,7 @@ CFG
 }
 
 # ===========================================================================
-# config/protect-egress — host-gateway egress rules (unit, no container)
+# usr/local/sbin/protect-egress — host-gateway egress rules (unit, no container)
 # ===========================================================================
 #
 # protect-egress normally runs inside the devcontainer with CAP_NET_ADMIN and
@@ -928,7 +930,7 @@ dc_live_seccomp_json() {
 }
 
 # ===========================================================================
-# config/post-create.sh — omlx() per-tier model resolution (unit, no container)
+# scripts/post-create.sh — omlx() per-tier model resolution (unit, no container)
 # ===========================================================================
 #
 # The omlx() launcher is defined as literal text inside a heredoc in
@@ -936,10 +938,10 @@ dc_live_seccomp_json() {
 # `omlx() {` opener to its column-0 closing brace), source it, and replace the
 # `claude` binary with a stub that dumps its environment. Asserting on that env
 # dump verifies which ANTHROPIC_DEFAULT_*_MODEL / CLAUDE_CODE_SUBAGENT_MODEL
-# values each combination of OMLX_*_MODEL vars resolves to — without a
+# values each combination of MLX_*_MODEL vars resolves to — without a
 # container, a real claude, or post-create's git side effects.
 
-POST_CREATE="$REPO_ROOT/config/post-create.sh"
+POST_CREATE="$REPO_ROOT/scripts/post-create.sh"
 
 # Extract omlx() to a sourceable file and install a claude stub that prints its
 # environment to stdout. The stub uses `env` so every VAR=val the function
@@ -953,12 +955,12 @@ _load_omlx() {
 # Run omlx() with the given VAR=val assignments exported into its environment,
 # capturing the stub's env dump in $output. TERM=dumb keeps the function's
 # `clear` quiet; </dev/null guards against any read. The leading -u flags clear
-# any OMLX_*/model-slot vars inherited from the test runner's own shell (the
-# host may itself export OMLX_MODEL etc.) so each test fully controls its inputs.
+# any MLX_*/model-slot vars inherited from the test runner's own shell (the
+# host may itself export MLX_MODEL etc.) so each test fully controls its inputs.
 _run_omlx() {
   run env \
-    -u OMLX_MODEL -u OMLX_OPUS_MODEL -u OMLX_SONNET_MODEL -u OMLX_HAIKU_MODEL \
-    -u OMLX_CONTEXT_WINDOW \
+    -u MLX_MODEL -u MLX_OPUS_MODEL -u MLX_SONNET_MODEL -u MLX_HAIKU_MODEL \
+    -u MLX_CONTEXT_WINDOW \
     -u ANTHROPIC_DEFAULT_OPUS_MODEL -u ANTHROPIC_DEFAULT_SONNET_MODEL \
     -u ANTHROPIC_DEFAULT_HAIKU_MODEL -u CLAUDE_CODE_SUBAGENT_MODEL \
     TERM=dumb "$@" bash -c \
@@ -967,10 +969,10 @@ _run_omlx() {
 
 @test "omlx: per-tier vars drive their own ANTHROPIC_DEFAULT_*_MODEL slots" {
   _load_omlx
-  _run_omlx OMLX_MODEL=base \
-            OMLX_OPUS_MODEL=opus-x \
-            OMLX_SONNET_MODEL=sonnet-y \
-            OMLX_HAIKU_MODEL=haiku-z
+  _run_omlx MLX_MODEL=base \
+            MLX_OPUS_MODEL=opus-x \
+            MLX_SONNET_MODEL=sonnet-y \
+            MLX_HAIKU_MODEL=haiku-z
   [ "$status" -eq 0 ]
   [[ "$output" == *"ANTHROPIC_DEFAULT_OPUS_MODEL=opus-x"* ]]
   [[ "$output" == *"ANTHROPIC_DEFAULT_SONNET_MODEL=sonnet-y"* ]]
@@ -979,9 +981,9 @@ _run_omlx() {
   [[ "$output" == *"CLAUDE_CODE_SUBAGENT_MODEL=sonnet-y"* ]]
 }
 
-@test "omlx: unset per-tier vars fall back to OMLX_MODEL on every slot" {
+@test "omlx: unset per-tier vars fall back to MLX_MODEL on every slot" {
   _load_omlx
-  _run_omlx OMLX_MODEL=base
+  _run_omlx MLX_MODEL=base
   [ "$status" -eq 0 ]
   [[ "$output" == *"ANTHROPIC_DEFAULT_OPUS_MODEL=base"* ]]
   [[ "$output" == *"ANTHROPIC_DEFAULT_SONNET_MODEL=base"* ]]
@@ -989,9 +991,9 @@ _run_omlx() {
   [[ "$output" == *"CLAUDE_CODE_SUBAGENT_MODEL=base"* ]]
 }
 
-@test "omlx: a per-tier var overrides OMLX_MODEL only for its own slot" {
+@test "omlx: a per-tier var overrides MLX_MODEL only for its own slot" {
   _load_omlx
-  _run_omlx OMLX_MODEL=base OMLX_OPUS_MODEL=opus-x
+  _run_omlx MLX_MODEL=base MLX_OPUS_MODEL=opus-x
   [ "$status" -eq 0 ]
   [[ "$output" == *"ANTHROPIC_DEFAULT_OPUS_MODEL=opus-x"* ]]
   [[ "$output" == *"ANTHROPIC_DEFAULT_SONNET_MODEL=base"* ]]
@@ -999,10 +1001,10 @@ _run_omlx() {
 }
 
 @test "omlx: an empty (forwarded-but-unset) per-tier var falls back, not blanks" {
-  # devcontainer.json forwards ${localEnv:OMLX_OPUS_MODEL} as "" when the host
+  # devcontainer.json forwards ${localEnv:MLX_OPUS_MODEL} as "" when the host
   # var is unset; ':-' must treat empty as absent so the slot is not blanked.
   _load_omlx
-  _run_omlx OMLX_MODEL=base OMLX_OPUS_MODEL=
+  _run_omlx MLX_MODEL=base MLX_OPUS_MODEL=
   [ "$status" -eq 0 ]
   [[ "$output" == *"ANTHROPIC_DEFAULT_OPUS_MODEL=base"* ]]
 }
@@ -1018,36 +1020,38 @@ _run_omlx() {
 }
 
 # ===========================================================================
-# config/post-create.sh — git insteadOf rewrite for egress-locked submit (unit)
+# config/git/config — git insteadOf rewrite for egress-locked submit (unit)
 # ===========================================================================
 #
 # Egress is locked to the squid proxy: port 22 / direct DNS are blocked, so all
-# git traffic must traverse https through the proxy. The bot gitconfig rewrites
-# the URL form (ssh://git@github.com/) but NOT the scp-shorthand form
-# (git@github.com:owner/repo) that real remotes use — so post-create.sh adds the
-# scp-shorthand `url.<https>.insteadOf` to the XDG git config. Without it,
+# git traffic must traverse https through the proxy. The baked XDG git config
+# (config/git/config, copied by the Dockerfile to ~/.config/git/config) rewrites
+# both the scp-shorthand form (git@github.com:owner/repo) that real remotes use
+# and the URL form (ssh://git@github.com/) via url.<https>.insteadOf. Without it,
 # `git fetch`/`push` and therefore `gt submit` fall through to real SSH and fail.
 #
-# These tests apply post-create.sh's *actual* XDG git-config commands to an
-# isolated HOME (extracted verbatim, so the test can't drift from the source),
+# These tests stage the repo's *actual* config/git/config at $HOME/.config/git/
+# in an isolated HOME (copied verbatim, so the test can't drift from the source),
 # then assert `git ls-remote --get-url` — which expands url.insteadOf and exits
 # without touching the network — produces the rewritten https URL.
 
-# Apply every `git config --file ~/.config/git/config ...` command from
-# post-create.sh into an isolated $HOME. sed collapses backslash line
-# continuations first; ~ then expands against the overridden HOME.
-_apply_post_create_gitconfig() {
+GIT_CONFIG_BAKED="$REPO_ROOT/config/git/config"
+
+# Stage config/git/config at the container's runtime path inside an isolated
+# HOME. Must be called directly (not in a command substitution) so its
+# `export HOME` reaches the test shell.
+_stage_baked_gitconfig() {
   export HOME="$BATS_TEST_TMPDIR/githome"
+  # Pin XDG_CONFIG_HOME under the isolated HOME. Without this, a host that
+  # exports XDG_CONFIG_HOME makes git read its global config from there,
+  # bypassing the staged baked config entirely.
+  export XDG_CONFIG_HOME="$HOME/.config"
   mkdir -p "$HOME/.config/git"
-  local cmd
-  while IFS= read -r cmd; do
-    eval "$cmd"
-  done < <(sed -e ':a' -e '/\\$/{N;s/\\\n//;ba}' "$POST_CREATE" \
-            | grep '^git config --file ~/\.config/git/config')
+  cp "$GIT_CONFIG_BAKED" "$HOME/.config/git/config"
 }
 
-@test "post-create gitconfig: scp-shorthand github remote rewrites to https" {
-  _apply_post_create_gitconfig
+@test "baked gitconfig: scp-shorthand github remote rewrites to https" {
+  _stage_baked_gitconfig
   cd "$BATS_TEST_TMPDIR"
   git init -q rewrite-scp && cd rewrite-scp
   git remote add origin git@github.com:owner/name.git
@@ -1057,11 +1061,11 @@ _apply_post_create_gitconfig() {
   [ "$output" = "https://github.com/owner/name.git" ]
 }
 
-@test "post-create gitconfig: ssh-url-form github remote also rewrites to https" {
-  # post-create.sh now carries the URL-form rule itself (RUS-65), so it no longer
-  # depends on the host bot ~/.gitconfig bind mount. Assert the rule applied from
-  # post-create.sh alone rewrites the ssh:// URL form to https.
-  _apply_post_create_gitconfig
+@test "baked gitconfig: ssh-url-form github remote also rewrites to https" {
+  # config/git/config carries the URL-form rule itself (RUS-65), so it no longer
+  # depends on the host bot ~/.gitconfig bind mount. Assert the baked config
+  # alone rewrites the ssh:// URL form to https.
+  _stage_baked_gitconfig
   cd "$BATS_TEST_TMPDIR"
   git init -q rewrite-url && cd rewrite-url
   git remote add origin ssh://git@github.com/owner/name.git
@@ -1070,10 +1074,10 @@ _apply_post_create_gitconfig() {
   [ "$output" = "https://github.com/owner/name.git" ]
 }
 
-@test "post-create gitconfig: scp-shorthand for non-github host is left untouched" {
+@test "baked gitconfig: scp-shorthand for non-github host is left untouched" {
   # The rewrite must be host-specific: a gitlab scp remote must NOT be rerouted
   # through the github https base.
-  _apply_post_create_gitconfig
+  _stage_baked_gitconfig
   cd "$BATS_TEST_TMPDIR"
   git init -q rewrite-other && cd rewrite-other
   git remote add origin git@gitlab.com:owner/name.git
@@ -1152,7 +1156,7 @@ _check_ignore() {
 }
 
 # ===========================================================================
-# config/post-start.sh — gh registered as git credential helper (static)
+# scripts/post-start.sh — gh registered as git credential helper (static)
 # ===========================================================================
 #
 # `gh auth login --with-token` stores the token but, unlike gh's interactive
@@ -1164,7 +1168,7 @@ _check_ignore() {
 # root), so we assert the source carries the call in the correct order — guarding
 # against someone dropping or reordering the line.
 
-POST_START="$REPO_ROOT/config/post-start.sh"
+POST_START="$REPO_ROOT/scripts/post-start.sh"
 
 @test "post-start: runs gh auth setup-git after gh auth login" {
   grep -q 'gh auth setup-git' "$POST_START"

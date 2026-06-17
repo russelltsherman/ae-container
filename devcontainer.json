@@ -14,17 +14,17 @@
     "NO_PROXY": "host.docker.internal",
     // OMLX local model server on the host. Forwarded to the omlx/omlx-yolo
     // shell functions which replicate the env that `omlx launch claude` sets.
-    // OMLX_MODEL is the base/default model id loaded in omlx (e.g.
-    // "qwen3-32b-4bit"). OMLX_OPUS_MODEL / OMLX_SONNET_MODEL / OMLX_HAIKU_MODEL
+    // MLX_MODEL is the base/default model id loaded in omlx (e.g.
+    // "qwen3-32b-4bit"). MLX_OPUS_MODEL / MLX_SONNET_MODEL / MLX_HAIKU_MODEL
     // optionally map each Claude tier to a distinct model id; any tier left
-    // unset falls back to OMLX_MODEL. OMLX_CONTEXT_WINDOW is optional.
-    "OMLX_API_KEY": "${localEnv:OMLX_API_KEY}",
-    "OMLX_PORT": "${localEnv:OMLX_PORT}",
-    "OMLX_MODEL": "${localEnv:OMLX_MODEL}",
-    "OMLX_OPUS_MODEL": "${localEnv:OMLX_OPUS_MODEL}",
-    "OMLX_SONNET_MODEL": "${localEnv:OMLX_SONNET_MODEL}",
-    "OMLX_HAIKU_MODEL": "${localEnv:OMLX_HAIKU_MODEL}",
-    "OMLX_CONTEXT_WINDOW": "${localEnv:OMLX_CONTEXT_WINDOW}",
+    // unset falls back to MLX_MODEL. MLX_CONTEXT_WINDOW is optional.
+    "MLX_API_KEY": "${localEnv:MLX_API_KEY}",
+    "MLX_PORT": "${localEnv:MLX_PORT}",
+    "MLX_MODEL": "${localEnv:MLX_MODEL}",
+    "MLX_OPUS_MODEL": "${localEnv:MLX_OPUS_MODEL}",
+    "MLX_SONNET_MODEL": "${localEnv:MLX_SONNET_MODEL}",
+    "MLX_HAIKU_MODEL": "${localEnv:MLX_HAIKU_MODEL}",
+    "MLX_CONTEXT_WINDOW": "${localEnv:MLX_CONTEXT_WINDOW}",
 
     // Ollama local model server on the host. Forwarded to the ollama/ollama-yolo
     // shell functions, which point Claude Code at Ollama's native Anthropic API

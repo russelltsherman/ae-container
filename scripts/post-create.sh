@@ -32,10 +32,10 @@ echo 'yolo() { claude "$@"; }' >> ~/.bashrc
 #   - Large API_TIMEOUT_MS for local inference (model loading + generation)
 #   - Disable attribution header and non-essential traffic
 #   - Override all model slots so Claude Code doesn't request unavailable models
-# Set OMLX_MODEL on the host to the model id you want (e.g. "qwen3-32b-4bit").
-# Per-tier overrides: OMLX_OPUS_MODEL / OMLX_SONNET_MODEL / OMLX_HAIKU_MODEL map
+# Set MLX_MODEL on the host to the model id you want (e.g. "qwen3-32b-4bit").
+# Per-tier overrides: MLX_OPUS_MODEL / MLX_SONNET_MODEL / MLX_HAIKU_MODEL map
 # each Claude tier to a distinct omlx model id (so opus can run a larger model
-# than haiku). Any tier left unset falls back to OMLX_MODEL. Subagents follow the
+# than haiku). Any tier left unset falls back to MLX_MODEL. Subagents follow the
 # sonnet/workhorse tier. ':-' treats an empty value (devcontainer.json forwards
 # an unset host var as "") as absent, so an unset tier falls back rather than
 # blanking its slot. With no model var set at all, the slots are left to Claude's
@@ -46,19 +46,19 @@ omlx() {
   clear
   local -a _env=(
     -u ANTHROPIC_API_KEY
-    ANTHROPIC_BASE_URL="http://host.docker.internal:${OMLX_PORT:-8000}"
-    ANTHROPIC_AUTH_TOKEN="${OMLX_API_KEY:-omlx}"
+    ANTHROPIC_BASE_URL="http://host.docker.internal:${MLX_PORT:-8000}"
+    ANTHROPIC_AUTH_TOKEN="${MLX_API_KEY:-omlx}"
     CLAUDE_CODE_ATTRIBUTION_HEADER=0
     API_TIMEOUT_MS=3000000
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
   )
-  local _opus="${OMLX_OPUS_MODEL:-${OMLX_MODEL:-}}"
-  local _sonnet="${OMLX_SONNET_MODEL:-${OMLX_MODEL:-}}"
-  local _haiku="${OMLX_HAIKU_MODEL:-${OMLX_MODEL:-}}"
+  local _opus="${MLX_OPUS_MODEL:-${MLX_MODEL:-}}"
+  local _sonnet="${MLX_SONNET_MODEL:-${MLX_MODEL:-}}"
+  local _haiku="${MLX_HAIKU_MODEL:-${MLX_MODEL:-}}"
   [[ -n "$_opus" ]]   && _env+=(ANTHROPIC_DEFAULT_OPUS_MODEL="$_opus")
   [[ -n "$_sonnet" ]] && _env+=(ANTHROPIC_DEFAULT_SONNET_MODEL="$_sonnet" CLAUDE_CODE_SUBAGENT_MODEL="$_sonnet")
   [[ -n "$_haiku" ]]  && _env+=(ANTHROPIC_DEFAULT_HAIKU_MODEL="$_haiku")
-  [[ -n "${OMLX_CONTEXT_WINDOW:-}" ]] && _env+=(CLAUDE_CODE_AUTO_COMPACT_WINDOW="$OMLX_CONTEXT_WINDOW")
+  [[ -n "${MLX_CONTEXT_WINDOW:-}" ]] && _env+=(CLAUDE_CODE_AUTO_COMPACT_WINDOW="$MLX_CONTEXT_WINDOW")
   env "${_env[@]}" claude --dangerously-skip-permissions "$@"
   printf '\x1b[>0u'
 }
