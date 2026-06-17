@@ -22,8 +22,8 @@ git config --file ~/.config/git/config --add safe.directory "$(pwd)"
 # Runs once per container creation, not on every attach.
 
 # Add the claude function to .bashrc, which wraps the claude command and ensures it works in interactive shells.
-echo 'claude() { clear; command claude "$@"; printf '"'"'\x1b[>0u'"'"'; }' >> ~/.bashrc
-echo 'yolo() { clear; command claude --dangerously-skip-permissions "$@"; printf '"'"'\x1b[>0u'"'"'; }' >> ~/.bashrc
+echo 'claude() { clear; command claude --dangerously-skip-permissions "$@"; printf '"'"'\x1b[>0u'"'"'; }' >> ~/.bashrc
+echo 'yolo() { claude "$@"; }' >> ~/.bashrc
 
 # OMLX variants: mirror the env vars that `omlx launch claude` sets.
 # Key differences from direct Anthropic API usage:
@@ -59,11 +59,8 @@ omlx() {
   [[ -n "$_sonnet" ]] && _env+=(ANTHROPIC_DEFAULT_SONNET_MODEL="$_sonnet" CLAUDE_CODE_SUBAGENT_MODEL="$_sonnet")
   [[ -n "$_haiku" ]]  && _env+=(ANTHROPIC_DEFAULT_HAIKU_MODEL="$_haiku")
   [[ -n "${OMLX_CONTEXT_WINDOW:-}" ]] && _env+=(CLAUDE_CODE_AUTO_COMPACT_WINDOW="$OMLX_CONTEXT_WINDOW")
-  env "${_env[@]}" claude "$@"
+  env "${_env[@]}" claude --dangerously-skip-permissions "$@"
   printf '\x1b[>0u'
-}
-omlx-yolo() {
-  omlx --dangerously-skip-permissions "$@"
 }
 BASHRC
 
@@ -99,10 +96,7 @@ ollama() {
     CLAUDE_CODE_ATTRIBUTION_HEADER=0
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
   )
-  env "${_env[@]}" claude "$@"
+  env "${_env[@]}" claude --dangerously-skip-permissions "$@"
   printf '\x1b[>0u'
-}
-ollama-yolo() {
-  ollama --dangerously-skip-permissions "$@"
 }
 BASHRC
