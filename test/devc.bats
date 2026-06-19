@@ -457,6 +457,28 @@ HOSTS
 # Integration lifecycle: adopt CONTAINER=... or regenerate template + devc up
 # ===========================================================================
 
+# Derive the in-container workspace path from the live container rather than
+# hardcoding /workspaces/<basename>. devcontainer.json owns workspaceFolder and
+# may point it at the absolute host path (${localWorkspaceFolder}), so the only
+# reliable source of truth is the bind mount that targets the host workspace
+# folder named by the devcontainer.local_folder label. On macOS the source can
+# carry a /host_mnt prefix. Leaves the caller's preset DC_WORKSPACE untouched
+# if anything can't be resolved.
+_derive_dc_workspace() {
+  [[ -z "$DC_CONTAINER_ID" ]] && return 0
+  local host_folder dest
+  host_folder=$(docker inspect "$DC_CONTAINER_ID" \
+                  --format '{{ index .Config.Labels "devcontainer.local_folder" }}' \
+                2>/dev/null)
+  [[ -z "$host_folder" ]] && return 0
+  dest=$(docker inspect "$DC_CONTAINER_ID" --format '{{json .Mounts}}' 2>/dev/null \
+         | jq -r --arg h "$host_folder" \
+             '.[] | select(.Source == $h or .Source == "/host_mnt" + $h) | .Destination' \
+         | head -1)
+  [[ -n "$dest" ]] && export DC_WORKSPACE="$dest"
+  return 0
+}
+
 setup_file() {
   export INTEGRATION_SKIP_REASON=""
   export DC_CONTAINER_ID=""
@@ -482,6 +504,7 @@ setup_file() {
       return 0
     fi
     DC_CONTAINER_ID="$id"
+    _derive_dc_workspace
     return 0
   fi
 
@@ -523,6 +546,8 @@ setup_file() {
     --format '{{.ID}}' | head -1)
   if [[ -z "$DC_CONTAINER_ID" ]]; then
     INTEGRATION_SKIP_REASON="devc up completed but no container matches workspace label"
+  else
+    _derive_dc_workspace
   fi
   return 0
 }
@@ -821,8 +846,24 @@ dc_live_seccomp_json() {
 
 @test "CS-05: host paths outside repo/mounts are inaccessible from container" {
   _integration_restore_env
-  run dc_exec test -d /Users
-  [ "$status" -ne 0 ]
+  # When the workspace mounts at its absolute host path (${localWorkspaceFolder}),
+  # the container auto-creates the *empty* ancestor dirs of the mount point
+  # (/Users, /Users/<user>, ...). Their mere existence is not a leak — only real
+  # host *content* would be. Assert each ancestor between / and the workspace
+  # holds nothing but the single child on the path to the workspace, so no
+  # sibling host entries (other users, other repos) are visible inside.
+  local -a parts
+  IFS='/' read -r -a parts <<<"${DC_WORKSPACE#/}"
+  local n=${#parts[@]} k dir expected
+  [ "$n" -ge 2 ]
+  for (( k=0; k<n-1; k++ )); do
+    dir="/$(IFS=/; echo "${parts[*]:0:k+1}")"
+    expected="${parts[k+1]}"
+    run dc_exec ls -A "$dir"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$expected" ] \
+      || { echo "ancestor $dir leaked host entries: '$output' (expected only '$expected')"; return 1; }
+  done
 }
 
 @test "CS-03: docker socket is not present inside the container" {

@@ -6,6 +6,7 @@
   },
 
   "containerEnv": {
+    "PROTECT_PATHS_WORKSPACE": "${localWorkspaceFolder}",
     "http_proxy": "http://127.0.0.1:3128",
     "https_proxy": "http://127.0.0.1:3128",
     "HTTP_PROXY": "http://127.0.0.1:3128",
@@ -97,6 +98,6 @@
 
   "remoteUser": "vscode",
 
-  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind,consistency=cached"
+  "workspaceFolder": "${localWorkspaceFolder}",
+  "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind,consistency=cached"
 }
