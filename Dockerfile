@@ -55,6 +55,9 @@ COPY usr/local/bin/show-motd /usr/local/bin/show-motd
 RUN chmod 0755 /usr/local/bin/show-motd \
     && echo '[ -x /usr/local/bin/show-motd ] && /usr/local/bin/show-motd' >> /etc/bash.bashrc
 
+COPY etc/profile.d/cc-oauth-token.sh /etc/profile.d/cc-oauth-token.sh
+RUN chmod 0644 /etc/profile.d/cc-oauth-token.sh
+
 # Restrict vscode sudo to security init scripts only.
 # The base image ships NOPASSWD:ALL which is too broad —
 # the agent runs as vscode and must not be able to

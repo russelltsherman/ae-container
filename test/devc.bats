@@ -10,9 +10,9 @@
 #
 #   UNIT (no container, stubbed) — target the repo-root sources:
 #     - install.sh            the `devc` host CLI (up/rebuild/down/template/...)
-#     - scripts/initialize.sh host-side initializeCommand: docker probe, macOS
-#                             keychain export, project settings seeding,
-#                             mount-source placeholder creation
+#     - scripts/initialize.sh host-side initializeCommand: docker probe, Claude
+#                             OAuth token presence check, project settings
+#                             seeding, mount-source placeholder creation
 #     - usr/local/sbin/protect-paths  protected-paths pattern parser / exclusions
 #
 #   INTEGRATION (live container) — runtime invariants via docker inspect/exec:
@@ -31,8 +31,9 @@
 #   CONTAINER=__none__ bats test/devc.bats
 #
 # Requires: bash, docker, jq, bats-core, the devcontainer CLI. Full lifecycle
-# additionally needs the macOS keychain entry "Claude Code-credentials" and the
-# bot identity under ~/.bot (gitconfig, gh, graphite, ssh).
+# additionally needs the bot identity under ~/.bot (claude/oauth-token,
+# gitconfig, gh, graphite, ssh). Generate the Claude token with `claude
+# setup-token` and save it to ~/.bot/claude/oauth-token.
 
 REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 INSTALL="$REPO_ROOT/install.sh"
@@ -75,9 +76,12 @@ setup() {
   mkdir -p "$BATS_TEST_TMPDIR/home/.claude"
   create_stub devcontainer 0 ""
   create_stub docker       0 ""
-  create_stub security     0 '{"token":"test-token"}'
   export PATH="$BATS_TEST_TMPDIR/stubs:$JQ_DIR:/usr/bin:/bin:/usr/sbin:/sbin"
   export HOME="$BATS_TEST_TMPDIR/home"
+  # Seed the Claude OAuth token initialize.sh now gates on, so the happy-path
+  # initialize.sh tests pass. The missing/empty token tests override it.
+  mkdir -p "$HOME/.bot/claude"
+  printf 'test-oauth-token' > "$HOME/.bot/claude/oauth-token"
 }
 
 # ===========================================================================
@@ -109,6 +113,21 @@ JSON
   run bash "$INSTALL" up "$ws"
   [ "$status" -eq 0 ]
   [[ "$(stub_calls devcontainer)" == *"up --workspace-folder $ws"* ]]
+}
+
+@test "devcontainer.json: bind-mounts the Claude OAuth token read-only" {
+  grep -Eq '"source=\$\{localEnv:HOME\}/\.bot/claude/,target=/home/vscode/\.bot/claude/,type=bind,readonly"' \
+    "$REPO_ROOT/devcontainer.json"
+}
+
+@test "Dockerfile: a /etc/profile.d snippet exports CLAUDE_CODE_OAUTH_TOKEN from the mounted token" {
+  # The token reaches login shells / userEnvProbe (and thus `devc exec claude -p`)
+  # via /etc/profile.d, not a ~/.bashrc export and not /etc/environment.
+  grep -q '/etc/profile.d/claude-code-token.sh' "$REPO_ROOT/Dockerfile"
+  grep -q 'CLAUDE_CODE_OAUTH_TOKEN' "$REPO_ROOT/Dockerfile"
+  grep -q '\.bot/claude/oauth-token' "$REPO_ROOT/Dockerfile"
+  # Guard against regressing to the interactive-only ~/.bashrc export.
+  ! grep -q 'export CLAUDE_CODE_OAUTH_TOKEN' "$REPO_ROOT/scripts/post-create.sh"
 }
 
 @test "devc rebuild: adds --remove-existing-container, not --build-no-cache" {
@@ -225,32 +244,28 @@ STUB
   [ "$status" -eq 0 ]
 }
 
-@test "initialize.sh: macOS keychain export writes credentials with 0600 perms" {
-  [ "$(uname)" = "Darwin" ] || skip "macOS keychain export only runs on Darwin"
+@test "initialize.sh: does NOT export keychain credentials into a .credentials.json file" {
+  # The keychain-export path was removed; container auth now uses a long-lived
+  # CLAUDE_CODE_OAUTH_TOKEN instead of the shared, rotating .credentials.json.
+  local ws="$BATS_TEST_TMPDIR/myproj"; mkdir -p "$ws"; cd "$ws"
   run bash "$INITIALIZE"
   [ "$status" -eq 0 ]
-  [ -f "$HOME/.claude/.credentials.json" ]
-  local perms; perms="$(/usr/bin/stat -f '%Lp' "$HOME/.claude/.credentials.json")"
-  [ "$perms" = "600" ]
-  [[ "$(cat "$HOME/.claude/.credentials.json")" == *"test-token"* ]]
+  [ ! -f "$HOME/.claude/.credentials.json" ]
 }
 
-@test "initialize.sh: keychain export overwrites a stale credentials file" {
-  [ "$(uname)" = "Darwin" ] || skip "macOS keychain export only runs on Darwin"
-  echo '{"token":"old-token"}' > "$HOME/.claude/.credentials.json"
-  run bash "$INITIALIZE"
-  [ "$status" -eq 0 ]
-  local content; content="$(cat "$HOME/.claude/.credentials.json")"
-  [[ "$content" == *"test-token"* ]]
-  [[ "$content" != *"old-token"* ]]
-}
-
-@test "initialize.sh: exits non-zero with a clear error when keychain entry is missing" {
-  [ "$(uname)" = "Darwin" ] || skip "macOS keychain export only runs on Darwin"
-  create_stub security 1 ""
+@test "initialize.sh: exits non-zero with a clear error when the OAuth token is missing" {
+  rm -f "$HOME/.bot/claude/oauth-token"
   run bash "$INITIALIZE"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"credentials"* ]]
+  [[ "$output" == *"OAuth token"* ]]
+  [[ "$output" == *"setup-token"* ]]
+}
+
+@test "initialize.sh: exits non-zero when the OAuth token file is empty" {
+  : > "$HOME/.bot/claude/oauth-token"
+  run bash "$INITIALIZE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"OAuth token"* ]]
 }
 
 # ===========================================================================
@@ -508,14 +523,13 @@ setup_file() {
     return 0
   fi
 
-  # Full lifecycle needs the devcontainer CLI and (on macOS) the keychain entry.
+  # Full lifecycle needs the devcontainer CLI and the bot-identity Claude token.
   if ! command -v devcontainer &>/dev/null; then
     INTEGRATION_SKIP_REASON="devcontainer CLI not installed on host"
     return 0
   fi
-  if [[ "$(uname)" == "Darwin" ]] \
-     && ! security find-generic-password -s "Claude Code-credentials" -w &>/dev/null; then
-    INTEGRATION_SKIP_REASON="Keychain entry 'Claude Code-credentials' is missing"
+  if [[ ! -s "$REAL_HOME/.bot/claude/oauth-token" ]]; then
+    INTEGRATION_SKIP_REASON="Claude OAuth token missing at ~/.bot/claude/oauth-token (run: claude setup-token)"
     return 0
   fi
 
@@ -777,26 +791,36 @@ dc_live_seccomp_json() {
 # Credential Scoping (CS-01 .. CS-06)
 # ===========================================================================
 
-@test "CS-01: credential file exists at /home/vscode/.claude/.credentials.json" {
+@test "CS-01: the OAuth token is bind-mounted read-only into the container" {
   _integration_restore_env
-  run dc_exec test -f /home/vscode/.claude/.credentials.json
+  run dc_exec test -f /home/vscode/.bot/claude/oauth-token
+  [ "$status" -eq 0 ]
+  run dc_exec bash -c "mount | grep ' on /home/vscode/.bot/claude ' | grep -qE '[(,]ro[,)]'"
   [ "$status" -eq 0 ]
 }
 
-@test "CS-01: credential file on host has permissions 600" {
+@test "CS-01: the /etc/profile.d token snippet exists in the container" {
   _integration_restore_env
-  local perms
-  perms="$(/usr/bin/stat -f "%Lp" "$REAL_HOME/.claude/.credentials.json" 2>/dev/null \
-    || /usr/bin/stat -c "%a" "$REAL_HOME/.claude/.credentials.json" 2>/dev/null \
-    || stat --format="%a" "$REAL_HOME/.claude/.credentials.json")"
-  [ "$perms" = "600" ]
+  run dc_exec test -f /etc/profile.d/claude-code-token.sh
+  [ "$status" -eq 0 ]
 }
 
-@test "CS-01: writing to the credential file inside the container persists to host" {
+@test "CS-01: a login shell exports CLAUDE_CODE_OAUTH_TOKEN matching the mounted token" {
+  # A login shell (as `devc shell` uses, and as userEnvProbe captures) sources
+  # /etc/profile.d. A raw non-interactive `docker exec` would NOT — that path is
+  # intentionally not covered by this file-based mechanism.
   _integration_restore_env
-  local sentinel="integration-test-sentinel-$$"
-  dc_exec bash -c "echo '$sentinel' >> /home/vscode/.claude/.credentials.json"
-  grep -q "$sentinel" "$REAL_HOME/.claude/.credentials.json"
+  local from_env from_file
+  from_env="$(dc_exec bash -lc 'printf "%s" "$CLAUDE_CODE_OAUTH_TOKEN"' 2>/dev/null)"
+  from_file="$(dc_exec cat /home/vscode/.bot/claude/oauth-token)"
+  [ -n "$from_env" ]
+  [ "$from_env" = "$from_file" ]
+}
+
+@test "CS-01: the OAuth token is NOT exported via ~/.bashrc (system profile.d, not per-user rc)" {
+  _integration_restore_env
+  run dc_exec bash -c 'grep -q "export CLAUDE_CODE_OAUTH_TOKEN" ~/.bashrc'
+  [ "$status" -ne 0 ]
 }
 
 @test "CS-04: the shared agents config is bind-mounted into the container" {
