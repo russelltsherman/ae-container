@@ -50,7 +50,16 @@
 
     // Claude Code Config
     "source=${localEnv:HOME}/.claude/,target=/home/vscode/.claude/,type=bind",
-    "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind",
+
+    // Claude Code stores mutable per-machine STATE (project history, MCP
+    // registrations, onboarding/migration flags) in ~/.claude.json, rewriting the
+    // whole file on many operations. Bind-mounting the single host file read-write
+    // into every container made them share one inode; concurrent rewrites
+    // interleave and truncate it, producing "invalid JSON" on launch. Instead we
+    // mount it READ-ONLY as a seed and copy it once into a container-local file in
+    // post-create.sh, so each container writes its own copy and can never corrupt
+    // the host file (whose only writer is then the host's own Claude).
+    "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json.seed,type=bind,readonly",
 
     // Claude Code long-lived OAuth token (bot identity). 
     "source=${localEnv:HOME}/.bot/claude/,target=/home/vscode/.bot/claude/,type=bind,readonly",
