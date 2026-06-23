@@ -199,7 +199,9 @@ cmd_template() {
 
   local devcontainer_dir="$target_dir/.agentcontainer"
   local devcontainer_json="$devcontainer_dir/devcontainer.json"
+  local local_allowlist="$devcontainer_dir/etc/squid/local.allowlist.conf"
   local preserved_mounts=""
+  local preserved_allowlist=""
 
   if [[ -d "$devcontainer_dir" ]]; then
     log_warn "Devcontainer already exists at $devcontainer_dir"
@@ -214,6 +216,14 @@ cmd_template() {
     preserved_mounts=$(extract_mounts_to_file "$devcontainer_json")
     if [[ -n "$preserved_mounts" ]]; then
       log_info "Preserving custom mounts..."
+    fi
+
+    # local.allowlist.conf is the per-project egress allowlist: seed-once, never
+    # overwritten. It lives inside etc/, which `cp -r` below replaces wholesale,
+    # so stash a project's copy here and restore it after the copy.
+    if [[ -f "$local_allowlist" ]]; then
+      preserved_allowlist="$(mktemp)"
+      cp "$local_allowlist" "$preserved_allowlist"
     fi
   fi
 
@@ -243,6 +253,13 @@ cmd_template() {
     merge_mounts_from_file "$devcontainer_json" "$preserved_mounts"
     rm -f "$preserved_mounts"
     log_info "Custom mounts restored"
+  fi
+
+  # Restore a preserved per-project allowlist (seed-once semantics).
+  if [[ -n "$preserved_allowlist" ]]; then
+    cp "$preserved_allowlist" "$local_allowlist"
+    rm -f "$preserved_allowlist"
+    log_info "Preserving existing local.allowlist.conf"
   fi
 
   log_success "Template installed to $devcontainer_dir"

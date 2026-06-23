@@ -14,9 +14,13 @@ FROM ae-container-base:local
 # reset to vscode at the end (it is the container's runtime user / remoteUser).
 USER root
 
-# Copy squid configuration files into the image
+# Copy squid configuration files into the image. allowlist.conf is the shared,
+# reviewed allowlist; local.allowlist.conf holds per-project additions (seeded
+# once by `aec template`, never overwritten). squid.conf merges both. Both must
+# be present before the `squid -z` below parses the config.
 COPY etc/squid/squid.conf /etc/squid/squid.conf
 COPY etc/squid/allowlist.conf /etc/squid/allowlist.conf
+COPY etc/squid/local.allowlist.conf /etc/squid/local.allowlist.conf
 
 # Copy security init scripts into the image
 COPY usr/local/sbin/protect-egress /usr/local/sbin/protect-egress
@@ -28,8 +32,8 @@ RUN chmod 0755 /usr/local/sbin/protect-egress /usr/local/sbin/protect-paths /usr
 # post-start.sh launches squid (as root via sudo) at container start.
 RUN squid -z && rm -f /run/squid.pid /var/run/squid.pid
 
-# Welcome banner: static ASCII art baked into the image; allowlist section
-# is generated dynamically at shell start from the live allowlist.conf.
+# Welcome banner: static ASCII art baked into the image; allowlist section is
+# generated at shell start from the baked allowlist files (shared + local).
 COPY etc/motd /etc/motd
 COPY usr/local/bin/show-motd /usr/local/bin/show-motd
 RUN chmod 0755 /usr/local/bin/show-motd \

@@ -1,36 +1,45 @@
 #!/usr/bin/env bash
 # show-motd — display the welcome banner and the live network allowlist.
-# Reads allowlist.conf from the workspace (always up to date with the repo),
-# falling back to the image copy baked in at build time.
+# Reads the allowlist files baked into the image (what squid actually enforces):
+# the shared allowlist.conf plus the per-project local.allowlist.conf. Edits to
+# the source files take effect on the next `aec rebuild`.
 
 cat /etc/motd
-
-ALLOWLIST="/workspaces/archive/.devcontainer/etc/squid/allowlist.conf"
-[ -f "$ALLOWLIST" ] || ALLOWLIST="/etc/squid/allowlist.conf"
 
 echo "  Network allowlist (outbound HTTPS via squid proxy):"
 echo ""
 
-current_desc=""
-desc_shown=false
+# Render one allowlist file: the first comment in a blank-line-delimited group is
+# used as the human-readable description for the domains that follow it.
+render_allowlist() {
+  local file="$1"
+  [ -f "$file" ] || return 0
 
-while IFS= read -r line; do
-  if [[ -z "$line" ]]; then
-    current_desc=""
-    desc_shown=false
-  elif [[ "$line" =~ ^#[[:space:]]*(.*) ]]; then
-    # Use the first comment in a group as the human-readable description.
-    [[ -z "$current_desc" ]] && current_desc="${BASH_REMATCH[1]}"
-  elif [[ "$line" =~ ^\. ]]; then
-    domain="${line#.}"
-    if [[ -n "$current_desc" && "$desc_shown" == false ]]; then
-      printf "    %-30s — %s\n" "$domain" "$current_desc"
-      desc_shown=true
-    else
-      printf "    %s\n" "$domain"
+  local current_desc=""
+  local desc_shown=false
+  local line domain
+
+  while IFS= read -r line; do
+    if [[ -z "$line" ]]; then
+      current_desc=""
+      desc_shown=false
+    elif [[ "$line" =~ ^#[[:space:]]*(.*) ]]; then
+      # Use the first comment in a group as the human-readable description.
+      [[ -z "$current_desc" ]] && current_desc="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^\. ]]; then
+      domain="${line#.}"
+      if [[ -n "$current_desc" && "$desc_shown" == false ]]; then
+        printf "    %-30s — %s\n" "$domain" "$current_desc"
+        desc_shown=true
+      else
+        printf "    %s\n" "$domain"
+      fi
     fi
-  fi
-done < "$ALLOWLIST"
+  done < "$file"
+}
+
+render_allowlist /etc/squid/allowlist.conf
+render_allowlist /etc/squid/local.allowlist.conf
 echo ""
 
 # echo "  MCP servers: "

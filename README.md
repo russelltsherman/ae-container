@@ -140,6 +140,8 @@ The allowlist is committed to the repo and reviewed with code changes. Currently
 
 To permit another host, add its domain to `etc/squid/allowlist.conf` and rebuild. Anything not on the list is denied.
 
+**Per-project additions.** `etc/squid/allowlist.conf` is the shared, reviewed list and is **always refreshed** by `aec template`. For domains specific to one project, add them to `etc/squid/local.allowlist.conf` instead: the template **seeds it once and never overwrites it**, so per-project entries survive template updates (same seed-once model as `local.Dockerfile`). Squid merges both files, so a local entry can only *add* access, never remove a shared one. Changes take effect on the next `aec rebuild` (squid reads the copy baked into the image).
+
 ## CLI Helper Commands
 
 ```

@@ -236,6 +236,48 @@ STUB
     "$REPO_ROOT/devcontainer.json"
 }
 
+@test "devc template: seeds local.allowlist.conf when the target has none" {
+  local dest="$BATS_TEST_TMPDIR/proj"; mkdir -p "$dest"
+  run bash "$INSTALL" template "$dest"
+  [ "$status" -eq 0 ]
+  [ -f "$dest/.agentcontainer/etc/squid/local.allowlist.conf" ]
+}
+
+@test "devc template: does NOT overwrite an existing local.allowlist.conf (per-project egress survives)" {
+  # local.allowlist.conf lives inside etc/, which `cp -r` replaces wholesale, so
+  # the template must stash and restore a project's customized copy.
+  local dest="$BATS_TEST_TMPDIR/proj"
+  mkdir -p "$dest/.agentcontainer/etc/squid"
+  printf '# project egress\n.internal.example.com\n' \
+    > "$dest/.agentcontainer/etc/squid/local.allowlist.conf"
+  # .agentcontainer already exists, so template prompts to overwrite — answer yes.
+  run bash -c "printf 'y\n' | bash '$INSTALL' template '$dest'"
+  [ "$status" -eq 0 ]
+  grep -q '\.internal\.example\.com' "$dest/.agentcontainer/etc/squid/local.allowlist.conf"
+}
+
+@test "devc template: always refreshes the shared allowlist.conf even when one exists" {
+  # allowlist.conf is the shared, reviewed list (not a customization point), so a
+  # stale copy must be overwritten to deliver allowlist updates.
+  local dest="$BATS_TEST_TMPDIR/proj"
+  mkdir -p "$dest/.agentcontainer/etc/squid"
+  printf '.stale-only.example\n' > "$dest/.agentcontainer/etc/squid/allowlist.conf"
+  run bash -c "printf 'y\n' | bash '$INSTALL' template '$dest'"
+  [ "$status" -eq 0 ]
+  ! grep -q 'stale-only' "$dest/.agentcontainer/etc/squid/allowlist.conf"
+  grep -q '\.anthropic\.com' "$dest/.agentcontainer/etc/squid/allowlist.conf"
+}
+
+@test "squid.conf: safe_domains ACL merges the shared and per-project allowlists" {
+  grep -Eq 'acl safe_domains dstdomain .*"/etc/squid/allowlist.conf".*"/etc/squid/local.allowlist.conf"' \
+    "$REPO_ROOT/etc/squid/squid.conf"
+}
+
+@test "local.Dockerfile: bakes both the shared and local allowlists into the image" {
+  grep -q 'COPY etc/squid/allowlist.conf /etc/squid/allowlist.conf' "$REPO_ROOT/local.Dockerfile"
+  grep -q 'COPY etc/squid/local.allowlist.conf /etc/squid/local.allowlist.conf' "$REPO_ROOT/local.Dockerfile"
+}
+
 @test "devc exec: forwards the command to 'devcontainer exec'" {
   local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
   run bash "$INSTALL" exec ls -la
@@ -1130,6 +1172,17 @@ dc_live_seccomp_json() {
   remote_ip="$(printf '%s\n' "$output" | sed -n '2p')"
   [[ "$http_code" != "000" ]]
   [ -n "$remote_ip" ]
+}
+
+@test "NI-05: the per-project local allowlist is baked in and squid's config parses" {
+  # local.allowlist.conf must be present in the image (squid.conf references it)
+  # and the merged config must parse — `squid -k parse` exits non-zero on a bad
+  # or missing acl file, which would prevent squid from starting at all.
+  _integration_restore_env
+  run dc_exec test -f /etc/squid/local.allowlist.conf
+  [ "$status" -eq 0 ]
+  run dc_exec_root squid -k parse -f /etc/squid/squid.conf
+  [ "$status" -eq 0 ]
 }
 
 # ===========================================================================
