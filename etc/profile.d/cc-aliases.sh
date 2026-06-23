@@ -1,0 +1,80 @@
+
+# Add the claude function to .bashrc, which wraps the claude command and ensures it works in interactive shells.
+claude() { clear; command claude --dangerously-skip-permissions "$@"; printf '"'"'\x1b[>0u'"'"'; }
+yolo() { claude "$@"; }
+
+# Purpose: configure the shell environment for Claude Code.
+# Runs once per container creation, not on every attach.
+
+
+# OMLX variants: mirror the env vars that `omlx launch claude` sets.
+# Key differences from direct Anthropic API usage:
+#   - ANTHROPIC_API_KEY is unset (not blank — blank still triggers conflict)
+#   - Auth goes via ANTHROPIC_AUTH_TOKEN as a Bearer token
+#   - Large API_TIMEOUT_MS for local inference (model loading + generation)
+#   - Disable attribution header and non-essential traffic
+#   - Override all model slots so Claude Code doesn't request unavailable models
+# Set MLX_MODEL on the host to the model id you want (e.g. "qwen3-32b-4bit").
+# Per-tier overrides: MLX_OPUS_MODEL / MLX_SONNET_MODEL / MLX_HAIKU_MODEL map
+# each Claude tier to a distinct omlx model id (so opus can run a larger model
+# than haiku). Any tier left unset falls back to MLX_MODEL. Subagents follow the
+# sonnet/workhorse tier. ':-' treats an empty value (devcontainer.json forwards
+# an unset host var as "") as absent, so an unset tier falls back rather than
+# blanking its slot. With no model var set at all, the slots are left to Claude's
+# defaults — which 404 against omlx, the loud failure we want over a silent wrong
+# model.
+omlx() {
+  clear
+  local -a _env=(
+    -u ANTHROPIC_API_KEY
+    ANTHROPIC_BASE_URL="http://host.docker.internal:${MLX_PORT:-8000}"
+    ANTHROPIC_AUTH_TOKEN="${MLX_API_KEY:-omlx}"
+    CLAUDE_CODE_ATTRIBUTION_HEADER=0
+    API_TIMEOUT_MS=3000000
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+  )
+  local _opus="${MLX_OPUS_MODEL:-${MLX_MODEL:-}}"
+  local _sonnet="${MLX_SONNET_MODEL:-${MLX_MODEL:-}}"
+  local _haiku="${MLX_HAIKU_MODEL:-${MLX_MODEL:-}}"
+  [[ -n "$_opus" ]]   && _env+=(ANTHROPIC_DEFAULT_OPUS_MODEL="$_opus")
+  [[ -n "$_sonnet" ]] && _env+=(ANTHROPIC_DEFAULT_SONNET_MODEL="$_sonnet" CLAUDE_CODE_SUBAGENT_MODEL="$_sonnet")
+  [[ -n "$_haiku" ]]  && _env+=(ANTHROPIC_DEFAULT_HAIKU_MODEL="$_haiku")
+  [[ -n "${MLX_CONTEXT_WINDOW:-}" ]] && _env+=(CLAUDE_CODE_AUTO_COMPACT_WINDOW="$MLX_CONTEXT_WINDOW")
+  env "${_env[@]}" claude --dangerously-skip-permissions "$@"
+  printf '\x1b[>0u'
+}
+
+# Ollama variants: Ollama 0.24+ natively serves the Anthropic Messages API at
+# /v1/messages, so Claude Code talks to it directly — no proxy, no omlx.
+# Determined empirically against claude 2.1.160 + ollama 0.24.0:
+#   - Only two vars are actually required: ANTHROPIC_BASE_URL and ANTHROPIC_MODEL.
+#     Without a model override Claude requests claude-* model IDs that Ollama
+#     doesn't have and every call 404s. ANTHROPIC_MODEL is a global override —
+#     it covers the main loop AND subagents, so the per-tier DEFAULT_*_MODEL and
+#     CLAUDE_CODE_SUBAGENT_MODEL vars the omlx function uses are unnecessary here.
+#   - OLLAMA_MODEL is required (:?) because not setting it is a guaranteed 404;
+#     fail loudly instead of launching into a broken session.
+#   - Auth is NOT required (Ollama ignores credentials); ANTHROPIC_AUTH_TOKEN is
+#     set only as defense for a host that isn't logged into claude.ai.
+#   - Reaching the host (outside this launcher): on Docker Desktop (macOS/Windows)
+#     host.docker.internal proxies to the host loopback, so a default
+#     127.0.0.1-bound `ollama serve` is reachable as-is (verified end-to-end).
+#     On native Linux Docker you'd instead need ollama bound to all interfaces
+#     (OLLAMA_HOST=0.0.0.0:11434).
+#   - If Claude Code's large prompts (30k+ tokens) get truncated, raise the
+#     server-side OLLAMA_CONTEXT_LENGTH to fit the model's context window.
+ollama() {
+  clear
+  local -a _env=(
+    -u ANTHROPIC_API_KEY                              # defensive: avoid real-key conflict
+    ANTHROPIC_BASE_URL="http://host.docker.internal:${OLLAMA_PORT:-11434}"
+    ANTHROPIC_MODEL="${OLLAMA_MODEL:?set OLLAMA_MODEL to an installed Ollama model, e.g. qwen3.6:35b-mlx}"
+    ANTHROPIC_SMALL_FAST_MODEL="${OLLAMA_MODEL}"      # defensive: background/classifier calls
+    ANTHROPIC_AUTH_TOKEN="${OLLAMA_API_KEY:-ollama}"  # optional: Ollama ignores the value
+    API_TIMEOUT_MS=3000000                            # local inference is slow
+    CLAUDE_CODE_ATTRIBUTION_HEADER=0
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+  )
+  env "${_env[@]}" claude --dangerously-skip-permissions "$@"
+  printf '\x1b[>0u'
+}
