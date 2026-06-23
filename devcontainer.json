@@ -39,7 +39,7 @@
     "OLLAMA_API_KEY": "${localEnv:OLLAMA_API_KEY}"
   },
 
-  "initializeCommand": "bash .devcontainer/scripts/initialize.sh",
+  "initializeCommand": "bash .agentcontainer/scripts/initialize.sh",
 
   "mounts": [
     // Mount host config repos for each AI coding tool so credentials
@@ -79,14 +79,14 @@
     // SSH token (bot identity)
     "source=${localEnv:HOME}/.bot/ssh,target=/home/vscode/.ssh,type=bind"
 
-    // Paths listed in .devcontainer/protected-paths are shadowed from inside
+    // Paths listed in .agentcontainer/protected-paths are shadowed from inside
     // the container at startup by /usr/local/sbin/protect-paths. See
-    // .devcontainer/SAFETY.md PC-04.
+    // .agentcontainer/SAFETY.md PC-04.
   ],
 
   // NET_ADMIN is required to apply iptables egress rules at startup (protect-egress).
   // SYS_ADMIN is required by protect-paths to bind-mount /dev/null over the paths
-  // in .devcontainer/protected-paths inside the virtioFS-mounted workspace; the
+  // in .agentcontainer/protected-paths inside the virtioFS-mounted workspace; the
   // Docker daemon cannot create those mounts itself on macOS. Both capabilities
   // are only exercised by root-owned scripts invoked via a tightly-scoped sudoers
   // allowlist (see etc/sudoers.d/vscode).
@@ -101,12 +101,12 @@
   // escalation) without removing the capability the startup scripts need.
   // See SAFETY.md PC-05.
   "runArgs": [
-    "--security-opt", "seccomp=${localWorkspaceFolder}/.devcontainer/etc/seccomp/hardened.json",
+    "--security-opt", "seccomp=${localWorkspaceFolder}/.agentcontainer/etc/seccomp/hardened.json",
     "--add-host=host.docker.internal:host-gateway"
   ],
 
-  "postCreateCommand": "bash .devcontainer/scripts/post-create.sh",
-  "postStartCommand": "bash .devcontainer/scripts/post-start.sh",
+  "postCreateCommand": "bash .agentcontainer/scripts/post-create.sh",
+  "postStartCommand": "bash .agentcontainer/scripts/post-start.sh",
 
   "remoteUser": "vscode",
 

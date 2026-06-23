@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Claude Code Devcontainer CLI Helper
-# Provides the `devc` command for managing devcontainers
+# Provides the `aec` command for managing devcontainers
 
 # Resolve symlinks to get actual script location
 SOURCE="${BASH_SOURCE[0]}"
@@ -23,7 +23,7 @@ NC='\033[0m' # No Color
 
 print_usage() {
   cat <<EOF
-    Usage: devc <command> [options]
+    Usage: aec <command> [options]
 
     Commands:
         .                   Install devcontainer template to current directory and start
@@ -31,8 +31,8 @@ print_usage() {
         rebuild [--no-cache]  Rebuild the devcontainer (preserves auth volumes)
         down                Stop the devcontainer
         shell               Open a shell in the running container
-        self-install        Install 'devc' command to ~/.local/bin
-        update              Update devc to the latest version
+        self-install        Install 'aec' command to ~/.local/bin
+        update              Update aec to the latest version
         template [dir]      Copy devcontainer template to directory (default: current)
         exec <cmd>          Execute a command in the running container
         upgrade             Upgrade Claude Code to latest version
@@ -43,38 +43,38 @@ print_usage() {
         help                Show this help message
 
     Examples:
-        devc .                      # Install template and start container
-        devc up                     # Start container in current directory
-        devc rebuild                # Clean rebuild
-        devc rebuild --no-cache     # Rebuild image from scratch (no build cache)
-        devc shell                  # Open interactive shell
-        devc self-install           # Install devc to PATH
-        devc update                 # Update to latest version
-        devc exec ls -la            # Run command in container
-        devc upgrade                # Upgrade Claude Code to latest
-        devc mount ~/data /data     # Add mount to container
-        devc sync                   # Sync sessions from all devcontainers
-        devc sync crypto            # Sync only matching devcontainer
-        devc cp /some/file ./out    # Copy a path from container to host
-        devc destroy                # Remove all project Docker resources
-        devc destroy -f             # Skip confirmation prompt
+        aec .                      # Install template and start container
+        aec up                     # Start container in current directory
+        aec rebuild                # Clean rebuild
+        aec rebuild --no-cache     # Rebuild image from scratch (no build cache)
+        aec shell                  # Open interactive shell
+        aec self-install           # Install aec to PATH
+        aec update                 # Update to latest version
+        aec exec ls -la            # Run command in container
+        aec upgrade                # Upgrade Claude Code to latest
+        aec mount ~/data /data     # Add mount to container
+        aec sync                   # Sync sessions from all devcontainers
+        aec sync crypto            # Sync only matching devcontainer
+        aec cp /some/file ./out    # Copy a path from container to host
+        aec destroy                # Remove all project Docker resources
+        aec destroy -f             # Skip confirmation prompt
 EOF
 }
 
 log_info() {
-  echo -e "${BLUE}[devc]${NC} $1"
+  echo -e "${BLUE}[aec]${NC} $1"
 }
 
 log_success() {
-  echo -e "${GREEN}[devc]${NC} $1"
+  echo -e "${GREEN}[aec]${NC} $1"
 }
 
 log_warn() {
-  echo -e "${YELLOW}[devc]${NC} $1"
+  echo -e "${YELLOW}[aec]${NC} $1"
 }
 
 log_error() {
-  echo -e "${RED}[devc]${NC} $1" >&2
+  echo -e "${RED}[aec]${NC} $1" >&2
 }
 
 check_devcontainer_cli() {
@@ -87,13 +87,13 @@ check_devcontainer_cli() {
 
 check_no_sys_admin() {
   local workspace="${1:-.}"
-  local dc_json="$workspace/.devcontainer/devcontainer.json"
+  local dc_json="$workspace/.agentcontainer/devcontainer.json"
   [[ -f "$dc_json" ]] || return 0
   if jq -e \
     '.runArgs[]? | select(test("SYS_ADMIN"))' \
     "$dc_json" >/dev/null 2>&1; then
     log_error "SYS_ADMIN capability detected in runArgs."
-    log_error "This defeats the read-only .devcontainer mount."
+    log_error "This defeats the read-only .agentcontainer mount."
     exit 1
   fi
 }
@@ -102,10 +102,20 @@ get_workspace_folder() {
   echo "${1:-$(pwd)}"
 }
 
+# Path to the devcontainer config. It lives in .agentcontainer/ (so a project
+# can keep a separate human .devcontainer/), which is NOT where the devcontainer
+# CLI auto-discovers config. Every `devcontainer up`/`exec` must therefore pass
+# `--config <this path>`, or the CLI falls back to looking for
+# .devcontainer/devcontainer.json and errors "devcontainer.json not found".
+get_config_file() {
+  local workspace_folder="$1"
+  echo "$workspace_folder/.agentcontainer/devcontainer.json"
+}
+
 # Extract custom mounts from devcontainer.json to a temp file
 # Returns the temp file path, or empty string if no custom mounts
 #
-# Security: .devcontainer/ is mounted read-only inside the container to prevent
+# Security: .agentcontainer/ is mounted read-only inside the container to prevent
 # a compromised process from injecting malicious mounts or commands into
 # devcontainer.json that execute on the host during rebuild. This protection
 # requires that SYS_ADMIN is never added to runArgs (it would allow remounting
@@ -127,7 +137,7 @@ extract_mounts_to_file() {
         (contains("target=/home/vscode/.claude,") | not) and
         (contains("target=/home/vscode/.config/gh,") | not) and
         (contains("target=/home/vscode/.gitconfig,") | not) and
-        (contains("target=/workspace/.devcontainer,") | not)
+        (contains("target=/workspace/.agentcontainer,") | not)
       )
     ) | if length > 0 then . else empty end
   ' "$devcontainer_json" 2>/dev/null) || true
@@ -187,7 +197,7 @@ cmd_template() {
     exit 1
   }
 
-  local devcontainer_dir="$target_dir/.devcontainer"
+  local devcontainer_dir="$target_dir/.agentcontainer"
   local devcontainer_json="$devcontainer_dir/devcontainer.json"
   local preserved_mounts=""
 
@@ -237,7 +247,8 @@ cmd_up() {
   check_no_sys_admin "$workspace_folder"
   log_info "Starting devcontainer in $workspace_folder..."
 
-  devcontainer up --workspace-folder "$workspace_folder"
+  devcontainer up --workspace-folder "$workspace_folder" \
+    --config "$(get_config_file "$workspace_folder")"
   log_success "Devcontainer started"
 }
 
@@ -273,7 +284,8 @@ cmd_rebuild() {
     log_info "Rebuilding devcontainer in $workspace_folder..."
   fi
 
-  devcontainer up --workspace-folder "$workspace_folder" "${build_args[@]}"
+  devcontainer up --workspace-folder "$workspace_folder" \
+    --config "$(get_config_file "$workspace_folder")" "${build_args[@]}"
   log_success "Devcontainer rebuilt"
 }
 
@@ -314,7 +326,9 @@ cmd_shell() {
   #   - \033[3J — clear the scrollback buffer (so you can't scroll up to see prior output)
   #   - \033[H — move the cursor to the top-left (home) position
   # - Net effect: a hard "fresh terminal" wipe, more thorough than plain clear.
-  devcontainer exec --workspace-folder "$workspace_folder" bash -c "printf '\033[2J\033[3J\033[H'; exec bash -l"
+  devcontainer exec --workspace-folder "$workspace_folder" \
+    --config "$(get_config_file "$workspace_folder")" \
+    bash -c "printf '\033[2J\033[3J\033[H'; exec bash -l"
 }
 
 cmd_exec() {
@@ -322,19 +336,8 @@ cmd_exec() {
   workspace_folder="$(get_workspace_folder)"
 
   check_devcontainer_cli
-  devcontainer exec --workspace-folder "$workspace_folder" "$@"
-}
-
-cmd_upgrade() {
-  local workspace_folder
-  workspace_folder="$(get_workspace_folder)"
-
-  check_devcontainer_cli
-  log_info "Upgrading Claude Code..."
-
-  devcontainer exec --workspace-folder "$workspace_folder" claude update
-
-  log_success "Claude Code upgraded"
+  devcontainer exec --workspace-folder "$workspace_folder" \
+    --config "$(get_config_file "$workspace_folder")" "$@"
 }
 
 cmd_mount() {
@@ -343,7 +346,7 @@ cmd_mount() {
   local readonly="false"
 
   if [[ -z "$host_path" ]] || [[ -z "$container_path" ]]; then
-    log_error "Usage: devc mount <host_path> <container_path> [--readonly]"
+    log_error "Usage: aec mount <host_path> <container_path> [--readonly]"
     exit 1
   fi
 
@@ -357,10 +360,10 @@ cmd_mount() {
 
   local workspace_folder
   workspace_folder="$(get_workspace_folder)"
-  local devcontainer_json="$workspace_folder/.devcontainer/devcontainer.json"
+  local devcontainer_json="$workspace_folder/.agentcontainer/devcontainer.json"
 
   if [[ ! -f "$devcontainer_json" ]]; then
-    log_error "No devcontainer.json found. Run 'devc template' first."
+    log_error "No devcontainer.json found. Run 'aec template' first."
     exit 1
   fi
 
@@ -370,7 +373,8 @@ cmd_mount() {
   update_devcontainer_mounts "$devcontainer_json" "$host_path" "$container_path" "$readonly"
 
   log_info "Recreating container with new mount..."
-  devcontainer up --workspace-folder "$workspace_folder" --remove-existing-container
+  devcontainer up --workspace-folder "$workspace_folder" \
+    --config "$devcontainer_json" --remove-existing-container
 
   log_success "Mount added: $host_path → $container_path"
 }
@@ -608,7 +612,7 @@ cmd_cp() {
   local host_path="${2:-}"
 
   if [[ -z "$container_path" ]] || [[ -z "$host_path" ]]; then
-    log_error "Usage: devc cp <container_path> <host_path>"
+    log_error "Usage: aec cp <container_path> <host_path>"
     exit 1
   fi
 
@@ -632,14 +636,14 @@ cmd_cp() {
 
 cmd_self_install() {
   local install_dir="$HOME/.local/bin"
-  local install_path="$install_dir/devc"
+  local install_path="$install_dir/aec"
 
   mkdir -p "$install_dir"
 
   # Create a symlink to the original script
   ln -sf "$SCRIPT_DIR/$SCRIPT_NAME" "$install_path"
 
-  log_success "Installed 'devc' to $install_path"
+  log_success "Installed 'aec' to $install_path"
 
   # Check if in PATH
   if [[ ":$PATH:" != *":$install_dir:"* ]]; then
@@ -650,11 +654,11 @@ cmd_self_install() {
 }
 
 cmd_update() {
-  log_info "Updating devc..."
+  log_info "Updating aec..."
 
   if ! git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
     log_error "Not a git repository: $SCRIPT_DIR"
-    log_info "Re-clone with: rm -rf ~/.claude-devcontainer && git clone https://github.com/trailofbits/claude-code-devcontainer ~/.claude-devcontainer"
+    log_info "Re-clone with: rm -rf ~/.agentcontainer && git clone https://github.com/russelltsherman/ae-container ~/.agentcontainer"
     exit 1
   fi
 
@@ -862,9 +866,6 @@ main() {
   exec)
     [[ "${1:-}" == "--" ]] && shift
     cmd_exec "$@"
-    ;;
-  upgrade)
-    cmd_upgrade
     ;;
   mount)
     cmd_mount "$@"

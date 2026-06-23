@@ -4,7 +4,7 @@
 # The repository is a devcontainer *template*: the canonical sources live at
 # the repo root (config/, scripts/, usr/, etc/, bin/, Dockerfile,
 # devcontainer.json, protected-paths) and install.sh's `devc template` copies
-# them into a target project's .devcontainer/ (which is gitignored / generated).
+# them into a target project's .agentcontainer/ (which is gitignored / generated).
 #
 # Layers (mirrors the host-side / in-container split):
 #
@@ -23,7 +23,7 @@
 #   # Fast path — adopt an existing running devcontainer:
 #   CONTAINER=<name-or-id> bats test/devc.bats
 #
-#   # Full lifecycle — setup_file regenerates .devcontainer/ from the repo-root
+#   # Full lifecycle — setup_file regenerates .agentcontainer/ from the repo-root
 #   # template (install.sh template), runs `devc up`, teardown removes it:
 #   bats test/devc.bats
 #
@@ -95,9 +95,19 @@ setup() {
   [[ "$(stub_calls devcontainer)" == *"up --workspace-folder $ws"* ]]
 }
 
+@test "devc up: points --config at <ws>/.agentcontainer/devcontainer.json" {
+  # The config lives in .agentcontainer, not the CLI's default .devcontainer,
+  # so every devcontainer invocation must pass --config explicitly or the CLI
+  # errors with '.devcontainer/devcontainer.json not found'.
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"
+  run bash "$INSTALL" up "$ws"
+  [ "$status" -eq 0 ]
+  [[ "$(stub_calls devcontainer)" == *"--config $ws/.agentcontainer/devcontainer.json"* ]]
+}
+
 @test "devc up: refuses when devcontainer.json adds SYS_ADMIN to runArgs" {
-  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws/.devcontainer"
-  cat > "$ws/.devcontainer/devcontainer.json" <<'JSON'
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws/.agentcontainer"
+  cat > "$ws/.agentcontainer/devcontainer.json" <<'JSON'
 { "runArgs": ["--cap-add", "SYS_ADMIN"] }
 JSON
   run bash "$INSTALL" up "$ws"
@@ -106,8 +116,8 @@ JSON
 }
 
 @test "devc up: proceeds when devcontainer.json has no SYS_ADMIN in runArgs" {
-  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws/.devcontainer"
-  cat > "$ws/.devcontainer/devcontainer.json" <<'JSON'
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws/.agentcontainer"
+  cat > "$ws/.agentcontainer/devcontainer.json" <<'JSON'
 { "runArgs": ["--add-host=host.docker.internal:host-gateway"] }
 JSON
   run bash "$INSTALL" up "$ws"
@@ -171,20 +181,20 @@ STUB
   [[ "$(stub_calls docker)" == *"stop deadbeef"* ]]
 }
 
-@test "devc template: installs the repo-root template into <dir>/.devcontainer" {
+@test "devc template: installs the repo-root template into <dir>/.agentcontainer" {
   local dest="$BATS_TEST_TMPDIR/proj"; mkdir -p "$dest"
   run bash "$INSTALL" template "$dest"
   [ "$status" -eq 0 ]
-  [ -f "$dest/.devcontainer/devcontainer.json" ]
-  [ -f "$dest/.devcontainer/Dockerfile" ]
-  [ -f "$dest/.devcontainer/protected-paths" ]
-  [ -d "$dest/.devcontainer/config" ]
-  [ -d "$dest/.devcontainer/etc" ]
-  [ -d "$dest/.devcontainer/bin" ]
-  [ -d "$dest/.devcontainer/scripts" ]
-  [ -d "$dest/.devcontainer/usr" ]
-  [ -f "$dest/.devcontainer/usr/local/sbin/protect-paths" ]
-  [ -f "$dest/.devcontainer/etc/seccomp/hardened.json" ]
+  [ -f "$dest/.agentcontainer/devcontainer.json" ]
+  [ -f "$dest/.agentcontainer/Dockerfile" ]
+  [ -f "$dest/.agentcontainer/protected-paths" ]
+  [ -d "$dest/.agentcontainer/config" ]
+  [ -d "$dest/.agentcontainer/etc" ]
+  [ -d "$dest/.agentcontainer/bin" ]
+  [ -d "$dest/.agentcontainer/scripts" ]
+  [ -d "$dest/.agentcontainer/usr" ]
+  [ -f "$dest/.agentcontainer/usr/local/sbin/protect-paths" ]
+  [ -f "$dest/.agentcontainer/etc/seccomp/hardened.json" ]
 }
 
 @test "devc exec: forwards the command to 'devcontainer exec'" {
@@ -194,6 +204,22 @@ STUB
   local calls; calls="$(stub_calls devcontainer)"
   [[ "$calls" == *"exec --workspace-folder"* ]]
   [[ "$calls" == *"ls -la"* ]]
+}
+
+@test "devc exec: points --config at <ws>/.agentcontainer/devcontainer.json" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
+  run bash "$INSTALL" exec ls -la
+  [ "$status" -eq 0 ]
+  [[ "$(stub_calls devcontainer)" == *"--config $ws/.agentcontainer/devcontainer.json"* ]]
+}
+
+@test "devc shell: points --config at <ws>/.agentcontainer/devcontainer.json" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
+  run bash "$INSTALL" shell
+  [ "$status" -eq 0 ]
+  local calls; calls="$(stub_calls devcontainer)"
+  [[ "$calls" == *"exec --workspace-folder"* ]]
+  [[ "$calls" == *"--config $ws/.agentcontainer/devcontainer.json"* ]]
 }
 
 @test "devc: unknown command exits non-zero and prints usage" {
@@ -278,13 +304,13 @@ STUB
 # call with a recorder via PROTECT_PATHS_MASK_HOOK. Both env vars are honored
 # only by the script's testing seam — production behavior is unchanged.
 
-# Build a fake workspace at $1, write its .devcontainer/protected-paths from
+# Build a fake workspace at $1, write its .agentcontainer/protected-paths from
 # $2, run the script, and record masked targets (relative to workspace root)
 # into $BATS_TEST_TMPDIR/masked.
 _pp_run() {
   local ws="$1" config="$2"
-  mkdir -p "$ws/.devcontainer"
-  printf '%s\n' "$config" > "$ws/.devcontainer/protected-paths"
+  mkdir -p "$ws/.agentcontainer"
+  printf '%s\n' "$config" > "$ws/.agentcontainer/protected-paths"
 
   local rec="$BATS_TEST_TMPDIR/masked"
   : > "$rec"
@@ -391,12 +417,20 @@ CFG
   ! grep -q "server/secrets/keep.json" "$BATS_TEST_TMPDIR/masked"
 }
 
+@test "T-PP-07: production workspace discovery scans for .agentcontainer/protected-paths" {
+  # The PROTECT_PATHS_WORKSPACE seam bypasses the /workspaces/*/ discovery loop,
+  # so guard the production path (env var unset) against regressing to the old
+  # .devcontainer location, which would silently leave host secrets unmasked.
+  grep -q '\.agentcontainer/protected-paths' "$PROTECT_PATHS"
+  ! grep -q '\.devcontainer/protected-paths' "$PROTECT_PATHS"
+}
+
 @test "T-PP-06: absolute or '..' exclusion patterns are refused" {
   # No include patterns ⇒ no mask attempts ⇒ no need for a mask hook; the
   # script's only job here is to emit refusal lines for the bad exclusions.
   local ws="$BATS_TEST_TMPDIR/ws"
-  mkdir -p "$ws/.devcontainer"
-  cat > "$ws/.devcontainer/protected-paths" <<'CFG'
+  mkdir -p "$ws/.agentcontainer"
+  cat > "$ws/.agentcontainer/protected-paths" <<'CFG'
 !/etc/passwd
 !../escape
 CFG
@@ -539,11 +573,11 @@ setup_file() {
     DC_ENV_FIXTURE_CREATED=1
   fi
 
-  # Regenerate .devcontainer/ from the repo-root template. The directory is
+  # Regenerate .agentcontainer/ from the repo-root template. The directory is
   # gitignored / generated; remove any stale copy first so `devc template`
   # does not hit its interactive overwrite prompt (a non-interactive read
   # would abort the copy).
-  rm -rf "$repo_root/.devcontainer"
+  rm -rf "$repo_root/.agentcontainer"
   if ! bash "$install" template "$repo_root" >/dev/null 2>&1; then
     INTEGRATION_SKIP_REASON="install.sh template failed during setup_file"
     return 0

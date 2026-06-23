@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Shadow the patterns listed in .devcontainer/protected-paths with /dev/null
+# Shadow the patterns listed in .agentcontainer/protected-paths with /dev/null
 # so secrets on the host are not visible to processes running inside the
 # container.
 #
@@ -37,7 +37,7 @@ else
   WORKSPACE=""
   for d in /workspaces/*/; do
     [[ -d "$d" ]] || continue
-    if [[ -f "${d}.devcontainer/protected-paths" ]]; then
+    if [[ -f "${d}.agentcontainer/protected-paths" ]]; then
       WORKSPACE="${d%/}"
       break
     fi
@@ -45,11 +45,11 @@ else
 fi
 
 if [[ -z "$WORKSPACE" ]]; then
-  echo "protect-paths: no workspace with .devcontainer/protected-paths found under /workspaces/; nothing to do" >&2
+  echo "protect-paths: no workspace with .agentcontainer/protected-paths found under /workspaces/; nothing to do" >&2
   exit 0
 fi
 
-PATHS_FILE="${WORKSPACE}/.devcontainer/protected-paths"
+PATHS_FILE="${WORKSPACE}/.agentcontainer/protected-paths"
 
 # Directory names skipped during recursive search: vendor/build artifacts
 # that are never sources of host secrets and expensive to walk.

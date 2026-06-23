@@ -25,7 +25,7 @@
 # the host are skipped silently.
 
 # .env files. The chosen basenames mirror the deny rules in
-# .devcontainer/config/initialize.sh and the .gitignore convention:
+# .agentcontainer/config/initialize.sh and the .gitignore convention:
 #   .env             — the file dotenv.config() loads
 #   .env.local       — Next.js auto-loads this in every mode except test
 #   .env.*.local     — Next.js per-mode override (.env.production.local etc.)

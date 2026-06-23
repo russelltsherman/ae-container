@@ -25,8 +25,8 @@ Running Claude with `bypassPermissions` on your host machine is risky. It can ex
 
 ```bash
 npm install -g @devcontainers/cli
-git clone https://github.com/russelltsherman/ae-container ~/.ae-container
-~/.ae-container/install.sh self-install
+git clone https://github.com/russelltsherman/ae-container ~/.agentcontainer
+~/.agentcontainer/install.sh self-install
 ```
 
 ## Quick Start
@@ -59,7 +59,7 @@ devc shell      # Opens shell in container
    devc .
 
    # Option B: Clone manually
-   git clone https://github.com/russelltsherman/ae-container .devcontainer/
+   git clone https://github.com/russelltsherman/ae-container .agentcontainer/
    ```
 
 3. Open **your project folder** in VS Code, then:

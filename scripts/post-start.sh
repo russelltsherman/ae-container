@@ -8,7 +8,7 @@ set -euo pipefail
 # (like our protect-paths bind mounts — they live in the mount namespace
 # and vanish on stop), waiting for ports to be ready.
 
-# Shadow paths from .devcontainer/protected-paths before anything else so
+# Shadow paths from .agentcontainer/protected-paths before anything else so
 # there is no window where the agent (or anything it spawns) can read host
 # secrets. This runs inside the container because nested bind mounts inside
 # the virtioFS workspace are rejected by runc on macOS Docker Desktop.
