@@ -226,6 +226,7 @@ cmd_template() {
   cp -r "$SCRIPT_DIR/scripts" "$devcontainer_dir/"
   cp -r "$SCRIPT_DIR/usr" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/Dockerfile" "$devcontainer_dir/"
+  cp "$SCRIPT_DIR/base.Dockerfile" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/devcontainer.json" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/protected-paths" "$devcontainer_dir/"
 

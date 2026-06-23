@@ -159,3 +159,36 @@ devc self-install   Install devc to ~/.local/bin
 
 > **Note:** Use `devc destroy` to clean up a project's Docker resources. Removing containers manually (e.g., `docker rm`) will leave orphaned volumes and images behind that `devc destroy` won't be able to find.
 
+## Image build (local base image)
+
+The image is built in two layers:
+
+- **`base.Dockerfile`** — the slow, rarely-changing toolchain (apt deps, Node, the
+  agent CLIs incl. Claude Code).
+- **`Dockerfile`** — `FROM ae-container-base:local` plus the small
+  security/config layers (squid, sudoers, protect-\* scripts, motd, config).
+
+The base image is built **on demand on the host** by `scripts/initialize.sh`
+(the `initializeCommand`), before `devcontainer up` builds the top image. It is
+tagged with a content hash of `base.Dockerfile`:
+
+- If an image for the current hash already exists, it is **reused** (no build).
+- If `base.Dockerfile` changes, the hash changes and the base is **rebuilt
+  automatically**.
+- The stable `ae-container-base:local` alias the `Dockerfile` references is
+  always repointed at the current hash, so `FROM` never has to change.
+
+Docker resolves `FROM ae-container-base:local` from the **local image store** (no
+registry pull), so nothing needs to be published.
+
+> **Forcing a base rebuild:** `devc rebuild --no-cache` rebuilds the **top** image
+> only — it does **not** rebuild the base. Because the Claude CLI in
+> `base.Dockerfile` pins to "latest" at build time, that pin only refreshes when
+> the base rebuilds. To force a fresh base without editing `base.Dockerfile`,
+> remove the cached image and rebuild:
+>
+> ```
+> docker rmi ae-container-base:local ae-container-base:<hash>
+> devc rebuild
+> ```
+

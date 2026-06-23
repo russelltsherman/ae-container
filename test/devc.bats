@@ -187,6 +187,7 @@ STUB
   [ "$status" -eq 0 ]
   [ -f "$dest/.agentcontainer/devcontainer.json" ]
   [ -f "$dest/.agentcontainer/Dockerfile" ]
+  [ -f "$dest/.agentcontainer/base.Dockerfile" ]
   [ -f "$dest/.agentcontainer/protected-paths" ]
   [ -d "$dest/.agentcontainer/config" ]
   [ -d "$dest/.agentcontainer/etc" ]
@@ -292,6 +293,110 @@ STUB
   run bash "$INITIALIZE"
   [ "$status" -ne 0 ]
   [[ "$output" == *"OAuth token"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# initialize.sh — local toolchain base image build-on-demand
+# ---------------------------------------------------------------------------
+#
+# initialize.sh builds the base image the devcontainer Dockerfile builds FROM,
+# tagging it with a content hash of base.Dockerfile so it rebuilds only when that
+# file changes, and always repoints the :local alias the FROM references. The
+# AEC_BASE_DOCKERFILE seam points the script at a fixture so these tests control
+# the hashed tag; the docker stub's `image inspect` exit code simulates a cache
+# hit (0, present) or miss (1, absent).
+
+# docker stub: `info` always succeeds (the upfront docker-running probe), `image
+# inspect` exits with $1, everything else (build, tag) succeeds. All calls are
+# recorded to $BATS_TEST_TMPDIR/calls/docker.
+_init_docker_stub() {
+  local inspect_exit="$1"
+  cat > "$BATS_TEST_TMPDIR/stubs/docker" <<STUB
+#!/bin/sh
+echo "\$@" >> "$BATS_TEST_TMPDIR/calls/docker"
+case "\$1 \$2" in
+  "info "*|"info") exit 0 ;;
+  "image inspect") exit $inspect_exit ;;
+  *)               exit 0 ;;
+esac
+STUB
+  chmod +x "$BATS_TEST_TMPDIR/stubs/docker"
+}
+
+@test "initialize.sh: builds the base image when the hashed tag is absent" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
+  export AEC_BASE_DOCKERFILE="$BATS_TEST_TMPDIR/base.Dockerfile"
+  printf 'FROM scratch\n' > "$AEC_BASE_DOCKERFILE"
+  _init_docker_stub 1   # image inspect -> missing
+  run bash "$INITIALIZE"
+  [ "$status" -eq 0 ]
+  local calls; calls="$(stub_calls docker)"
+  [[ "$calls" == *"build "*"-f $AEC_BASE_DOCKERFILE"*"-t ae-container-base:"* ]]
+}
+
+@test "initialize.sh: reuses the base image when the hashed tag already exists" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
+  export AEC_BASE_DOCKERFILE="$BATS_TEST_TMPDIR/base.Dockerfile"
+  printf 'FROM scratch\n' > "$AEC_BASE_DOCKERFILE"
+  _init_docker_stub 0   # image inspect -> present
+  run bash "$INITIALIZE"
+  [ "$status" -eq 0 ]
+  [[ "$(stub_calls docker)" != *"build"* ]]
+}
+
+@test "initialize.sh: always repoints the :local alias at the current hash" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
+  export AEC_BASE_DOCKERFILE="$BATS_TEST_TMPDIR/base.Dockerfile"
+  printf 'FROM scratch\n' > "$AEC_BASE_DOCKERFILE"
+  _init_docker_stub 0
+  run bash "$INITIALIZE"
+  [ "$status" -eq 0 ]
+  [[ "$(stub_calls docker)" == *"tag ae-container-base:"*" ae-container-base:local"* ]]
+}
+
+@test "initialize.sh: the base image tag changes when base.Dockerfile changes" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
+  export AEC_BASE_DOCKERFILE="$BATS_TEST_TMPDIR/base.Dockerfile"
+  _init_docker_stub 1
+
+  printf 'FROM scratch\n# v1\n' > "$AEC_BASE_DOCKERFILE"
+  run bash "$INITIALIZE"
+  [ "$status" -eq 0 ]
+  local tag1; tag1="$(grep -oE 'ae-container-base:[0-9a-f]{12}' "$BATS_TEST_TMPDIR/calls/docker" | head -1)"
+
+  : > "$BATS_TEST_TMPDIR/calls/docker"
+  printf 'FROM scratch\n# v2 changed\n' > "$AEC_BASE_DOCKERFILE"
+  run bash "$INITIALIZE"
+  [ "$status" -eq 0 ]
+  local tag2; tag2="$(grep -oE 'ae-container-base:[0-9a-f]{12}' "$BATS_TEST_TMPDIR/calls/docker" | head -1)"
+
+  [ -n "$tag1" ]
+  [ -n "$tag2" ]
+  [ "$tag1" != "$tag2" ]
+}
+
+@test "initialize.sh: exits non-zero when base.Dockerfile is missing" {
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
+  export AEC_BASE_DOCKERFILE="$BATS_TEST_TMPDIR/does-not-exist.Dockerfile"
+  _init_docker_stub 0
+  run bash "$INITIALIZE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"base image Dockerfile not found"* ]]
+}
+
+@test "base.Dockerfile: derives FROM the upstream devcontainers base image" {
+  grep -Eq '^FROM mcr\.microsoft\.com/devcontainers/base:' "$REPO_ROOT/base.Dockerfile"
+}
+
+@test "base.Dockerfile: carries the heavy toolchain (Node + Claude CLI install)" {
+  grep -q 'node_26' "$REPO_ROOT/base.Dockerfile"
+  grep -q 'downloads.claude.ai' "$REPO_ROOT/base.Dockerfile"
+}
+
+@test "Dockerfile: builds FROM the locally-built base image alias" {
+  grep -Eq '^FROM ae-container-base:local' "$REPO_ROOT/Dockerfile"
+  # The heavy toolchain must live in base.Dockerfile, not be duplicated here.
+  ! grep -q 'downloads.claude.ai' "$REPO_ROOT/Dockerfile"
 }
 
 # ===========================================================================

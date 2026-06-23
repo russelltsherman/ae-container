@@ -1,39 +1,17 @@
-FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
+# Per-container image: the small, frequently-changing security/config layers on
+# top of the toolchain base.
+#
+# The base (apt deps, Node, the agent CLIs incl. Claude) lives in base.Dockerfile
+# and is built on demand by scripts/initialize.sh, which tags it
+# `ae-container-base:local`. Docker resolves this FROM from the local image store
+# (no registry pull), so the base image must already exist when `devcontainer up`
+# runs this Dockerfile — initialize.sh (the initializeCommand) guarantees that.
+FROM ae-container-base:local
 
-# Prevent interactive prompts during package installation
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    bats \
-    ca-certificates \
-    curl \
-    gh \
-    git \
-    gnupg \
-    iptables \
-    jq \
-    squid \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Node.js 26.x
-RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-      | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/nodesource.gpg] \
-      https://deb.nodesource.com/node_26.x nodistro main" \
-      > /etc/apt/sources.list.d/nodesource.list \
-    && apt-get update \
-    && apt-get install -y \
-    nodejs \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# install NPM dependencies
-RUN npm install -g \
-    @mariozechner/pi-coding-agent@0.73.1 \
-    @openai/codex@0.137.0 \
-    @devcontainers/cli@0.87.0 \
-    @withgraphite/graphite-cli@1.8.6 \
-    && npm cache clean --force
+# The base image ends as USER vscode (for the Claude CLI install). The layers
+# below write to /etc and /usr/local, so switch back to root; the final USER is
+# reset to vscode at the end (it is the container's runtime user / remoteUser).
+USER root
 
 # Copy squid configuration files into the image
 COPY etc/squid/squid.conf /etc/squid/squid.conf
@@ -73,32 +51,5 @@ COPY --chown=vscode:vscode bin /home/vscode/bin
 # config
 COPY --chown=vscode:vscode config /home/vscode/.config
 
-# Install Claude Code as vscode user (native installer writes to ~/.local/bin)
+# The agent runs as vscode (also the devcontainer remoteUser).
 USER vscode
-
-# Create the Claude project directory so the read-only bind mount in
-# devcontainer.json has a valid parent directory to target at container start.
-RUN mkdir -p /home/vscode/.claude/projects/-workspaces-agent
-
-# Install Claude Code CLI from the official binary release.
-# Downloads the versioned binary, verifies its SHA256 checksum against the
-# signed manifest before executing anything, then uses the binary's own
-# install subcommand to place it on PATH. No npm, no unverified script execution.
-RUN ARCH="$(uname -m)" \
-    && case "$ARCH" in \
-         x86_64)  PLATFORM="linux-x64"   ;; \
-         aarch64) PLATFORM="linux-arm64"  ;; \
-         *) echo "error: unsupported architecture: $ARCH" >&2; exit 1 ;; \
-       esac \
-    && echo "PLATFORM: $PLATFORM" \
-    && VERSION="$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)" \
-    && echo "VERSION: $VERSION" \
-    && CHECKSUM="$(curl -fsSL "https://downloads.claude.ai/claude-code-releases/${VERSION}/manifest.json" \
-         | jq -r ".platforms[\"${PLATFORM}\"].checksum")" \
-    && echo "CHECKSUM: $CHECKSUM" \
-    && curl -fsSL "https://downloads.claude.ai/claude-code-releases/${VERSION}/${PLATFORM}/claude" \
-         -o /tmp/claude \
-    && echo "${CHECKSUM}  /tmp/claude" | sha256sum --check \
-    && chmod +x /tmp/claude \
-    && /tmp/claude install \
-    && rm -f /tmp/claude
