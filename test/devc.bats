@@ -2,8 +2,8 @@
 # test/devc.bats — consolidated devcontainer test suite.
 #
 # The repository is a devcontainer *template*: the canonical sources live at
-# the repo root (config/, scripts/, usr/, etc/, bin/, Dockerfile,
-# devcontainer.json, protected-paths) and install.sh's `devc template` copies
+# the repo root (config/, scripts/, usr/, etc/, bin/, base.Dockerfile,
+# local.Dockerfile, devcontainer.json, protected-paths) and install.sh's `devc template` copies
 # them into a target project's .agentcontainer/ (which is gitignored / generated).
 #
 # Layers (mirrors the host-side / in-container split):
@@ -130,12 +130,12 @@ JSON
     "$REPO_ROOT/devcontainer.json"
 }
 
-@test "Dockerfile: a /etc/profile.d snippet exports CLAUDE_CODE_OAUTH_TOKEN from the mounted token" {
+@test "local.Dockerfile: a /etc/profile.d snippet exports CLAUDE_CODE_OAUTH_TOKEN from the mounted token" {
   # The token reaches login shells / userEnvProbe (and thus `devc exec claude -p`)
   # via /etc/profile.d, not a ~/.bashrc export and not /etc/environment.
-  grep -q '/etc/profile.d/claude-code-token.sh' "$REPO_ROOT/Dockerfile"
-  grep -q 'CLAUDE_CODE_OAUTH_TOKEN' "$REPO_ROOT/Dockerfile"
-  grep -q '\.bot/claude/oauth-token' "$REPO_ROOT/Dockerfile"
+  grep -q '/etc/profile.d/claude-code-token.sh' "$REPO_ROOT/local.Dockerfile"
+  grep -q 'CLAUDE_CODE_OAUTH_TOKEN' "$REPO_ROOT/local.Dockerfile"
+  grep -q '\.bot/claude/oauth-token' "$REPO_ROOT/local.Dockerfile"
   # Guard against regressing to the interactive-only ~/.bashrc export.
   ! grep -q 'export CLAUDE_CODE_OAUTH_TOKEN' "$REPO_ROOT/scripts/post-create.sh"
 }
@@ -186,7 +186,7 @@ STUB
   run bash "$INSTALL" template "$dest"
   [ "$status" -eq 0 ]
   [ -f "$dest/.agentcontainer/devcontainer.json" ]
-  [ -f "$dest/.agentcontainer/Dockerfile" ]
+  [ -f "$dest/.agentcontainer/local.Dockerfile" ]
   [ -f "$dest/.agentcontainer/base.Dockerfile" ]
   [ -f "$dest/.agentcontainer/protected-paths" ]
   [ -d "$dest/.agentcontainer/config" ]
@@ -196,6 +196,44 @@ STUB
   [ -d "$dest/.agentcontainer/usr" ]
   [ -f "$dest/.agentcontainer/usr/local/sbin/protect-paths" ]
   [ -f "$dest/.agentcontainer/etc/seccomp/hardened.json" ]
+}
+
+@test "devc template: seeds local.Dockerfile (FROM the base alias) when the target has none" {
+  local dest="$BATS_TEST_TMPDIR/proj"; mkdir -p "$dest"
+  run bash "$INSTALL" template "$dest"
+  [ "$status" -eq 0 ]
+  [ -f "$dest/.agentcontainer/local.Dockerfile" ]
+  grep -Eq '^FROM ae-container-base:local' "$dest/.agentcontainer/local.Dockerfile"
+}
+
+@test "devc template: does NOT overwrite an existing local.Dockerfile (per-project customization survives)" {
+  # local.Dockerfile is the per-project customization point. A project edits it,
+  # then re-runs the template (e.g. after `devc update`); its edits must persist.
+  local dest="$BATS_TEST_TMPDIR/proj"
+  mkdir -p "$dest/.agentcontainer"
+  printf 'FROM ae-container-base:local\n# PROJECT-CUSTOM-LAYER\n' \
+    > "$dest/.agentcontainer/local.Dockerfile"
+  # .agentcontainer already exists, so template prompts to overwrite — answer yes.
+  run bash -c "printf 'y\n' | bash '$INSTALL' template '$dest'"
+  [ "$status" -eq 0 ]
+  grep -q '# PROJECT-CUSTOM-LAYER' "$dest/.agentcontainer/local.Dockerfile"
+}
+
+@test "devc template: always refreshes base.Dockerfile even when one already exists" {
+  # base.Dockerfile is the shared toolchain layer (not a customization point), so
+  # the template must overwrite a stale copy to deliver base image updates.
+  local dest="$BATS_TEST_TMPDIR/proj"
+  mkdir -p "$dest/.agentcontainer"
+  printf 'STALE-BASE-CONTENT\n' > "$dest/.agentcontainer/base.Dockerfile"
+  run bash -c "printf 'y\n' | bash '$INSTALL' template '$dest'"
+  [ "$status" -eq 0 ]
+  ! grep -q 'STALE-BASE-CONTENT' "$dest/.agentcontainer/base.Dockerfile"
+  grep -Eq '^FROM mcr\.microsoft\.com/devcontainers/base:' "$dest/.agentcontainer/base.Dockerfile"
+}
+
+@test "devcontainer.json: build.dockerfile points at local.Dockerfile" {
+  grep -Eq '"dockerfile"[[:space:]]*:[[:space:]]*"local\.Dockerfile"' \
+    "$REPO_ROOT/devcontainer.json"
 }
 
 @test "devc exec: forwards the command to 'devcontainer exec'" {
@@ -393,10 +431,10 @@ STUB
   grep -q 'downloads.claude.ai' "$REPO_ROOT/base.Dockerfile"
 }
 
-@test "Dockerfile: builds FROM the locally-built base image alias" {
-  grep -Eq '^FROM ae-container-base:local' "$REPO_ROOT/Dockerfile"
+@test "local.Dockerfile: builds FROM the locally-built base image alias" {
+  grep -Eq '^FROM ae-container-base:local' "$REPO_ROOT/local.Dockerfile"
   # The heavy toolchain must live in base.Dockerfile, not be duplicated here.
-  ! grep -q 'downloads.claude.ai' "$REPO_ROOT/Dockerfile"
+  ! grep -q 'downloads.claude.ai' "$REPO_ROOT/local.Dockerfile"
 }
 
 # ===========================================================================
@@ -1229,7 +1267,7 @@ _run_omlx() {
 #
 # Egress is locked to the squid proxy: port 22 / direct DNS are blocked, so all
 # git traffic must traverse https through the proxy. The baked XDG git config
-# (config/git/config, copied by the Dockerfile to ~/.config/git/config) rewrites
+# (config/git/config, copied by local.Dockerfile to ~/.config/git/config) rewrites
 # both the scp-shorthand form (git@github.com:owner/repo) that real remotes use
 # and the URL form (ssh://git@github.com/) via url.<https>.insteadOf. Without it,
 # `git fetch`/`push` and therefore `gt submit` fall through to real SSH and fail.
@@ -1294,7 +1332,7 @@ _stage_baked_gitconfig() {
 # config/git/ignore — global excludes at the XDG default path (unit, no container)
 # ===========================================================================
 #
-# The Dockerfile copies config/ -> /home/vscode/.config, so config/git/ignore
+# local.Dockerfile copies config/ -> /home/vscode/.config, so config/git/ignore
 # lands at ~/.config/git/ignore — git's XDG-default core.excludesFile (neither
 # the baked config/git/config nor the bot ~/.gitconfig sets core.excludesFile,
 # so git falls back to this path automatically). These tests reproduce that

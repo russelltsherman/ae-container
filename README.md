@@ -165,8 +165,11 @@ The image is built in two layers:
 
 - **`base.Dockerfile`** — the slow, rarely-changing toolchain (apt deps, Node, the
   agent CLIs incl. Claude Code).
-- **`Dockerfile`** — `FROM ae-container-base:local` plus the small
+- **`local.Dockerfile`** — `FROM ae-container-base:local` plus the small
   security/config layers (squid, sudoers, protect-\* scripts, motd, config).
+  This is the per-project customization point: `devc template` seeds it into a
+  project once and never overwrites it, so per-project edits survive re-running
+  the template. (`base.Dockerfile` is always refreshed.)
 
 The base image is built **on demand on the host** by `scripts/initialize.sh`
 (the `initializeCommand`), before `devcontainer up` builds the top image. It is
@@ -175,7 +178,7 @@ tagged with a content hash of `base.Dockerfile`:
 - If an image for the current hash already exists, it is **reused** (no build).
 - If `base.Dockerfile` changes, the hash changes and the base is **rebuilt
   automatically**.
-- The stable `ae-container-base:local` alias the `Dockerfile` references is
+- The stable `ae-container-base:local` alias the `local.Dockerfile` references is
   always repointed at the current hash, so `FROM` never has to change.
 
 Docker resolves `FROM ae-container-base:local` from the **local image store** (no

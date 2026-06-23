@@ -225,8 +225,16 @@ cmd_template() {
   cp -r "$SCRIPT_DIR/etc" "$devcontainer_dir/"
   cp -r "$SCRIPT_DIR/scripts" "$devcontainer_dir/"
   cp -r "$SCRIPT_DIR/usr" "$devcontainer_dir/"
-  cp "$SCRIPT_DIR/Dockerfile" "$devcontainer_dir/"
+  # base.Dockerfile is the shared toolchain layer — always refresh it so projects
+  # pick up base image updates.
   cp "$SCRIPT_DIR/base.Dockerfile" "$devcontainer_dir/"
+  # local.Dockerfile is the per-project customization point. Seed it once, then
+  # never overwrite, so edits a project makes survive re-running `aec template`.
+  if [[ -f "$devcontainer_dir/local.Dockerfile" ]]; then
+    log_info "Preserving existing local.Dockerfile"
+  else
+    cp "$SCRIPT_DIR/local.Dockerfile" "$devcontainer_dir/"
+  fi
   cp "$SCRIPT_DIR/devcontainer.json" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/protected-paths" "$devcontainer_dir/"
 

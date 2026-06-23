@@ -21,9 +21,9 @@ if [[ ! -s "$claude_token_file" ]]; then
 fi
 
 # Build (or reuse) the local toolchain base image that the devcontainer's
-# Dockerfile builds FROM. The base carries the slow, rarely-changing layers
+# local.Dockerfile builds FROM. The base carries the slow, rarely-changing layers
 # (apt deps, Node, the agent CLIs); the per-container build only re-runs the
-# small security/config layers on top. The Dockerfile starts
+# small security/config layers on top. local.Dockerfile starts
 # `FROM ae-container-base:local`, and Docker resolves that from the local image
 # store (no registry), so the image must exist before `devcontainer up` builds.
 #
@@ -31,7 +31,7 @@ fi
 # the current hash exists we reuse it, otherwise we build it. Editing
 # base.Dockerfile changes the hash and triggers an automatic rebuild, so the
 # base is never silently stale. The stable `:local` alias is always repointed at
-# the current hash, so the Dockerfile's FROM line never has to change.
+# the current hash, so local.Dockerfile's FROM line never has to change.
 #
 # AEC_BASE_DOCKERFILE overrides the base Dockerfile path (testing seam only;
 # production resolves it relative to this script).
@@ -65,7 +65,7 @@ else
     "$(dirname "$base_dockerfile")"
 fi
 
-# Always repoint the stable alias the Dockerfile's FROM references at the
+# Always repoint the stable alias local.Dockerfile's FROM references at the
 # current hash, so reverting base.Dockerfile reuses the matching cached image.
 docker tag "$base_image_hashed" "$base_image_local"
 

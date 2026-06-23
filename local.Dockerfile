@@ -1,11 +1,12 @@
 # Per-container image: the small, frequently-changing security/config layers on
-# top of the toolchain base.
+# top of the toolchain base. This is the per-project customization point — edit
+# it freely; `aec template` seeds it once and never overwrites it.
 #
 # The base (apt deps, Node, the agent CLIs incl. Claude) lives in base.Dockerfile
 # and is built on demand by scripts/initialize.sh, which tags it
 # `ae-container-base:local`. Docker resolves this FROM from the local image store
 # (no registry pull), so the base image must already exist when `devcontainer up`
-# runs this Dockerfile — initialize.sh (the initializeCommand) guarantees that.
+# runs this local.Dockerfile — initialize.sh (the initializeCommand) guarantees that.
 FROM ae-container-base:local
 
 # The base image ends as USER vscode (for the Claude CLI install). The layers

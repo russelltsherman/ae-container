@@ -2,7 +2,10 @@
   "name": "Archive Devcontainer",
 
   "build": {
-    "dockerfile": "Dockerfile"
+    // local.Dockerfile is the per-project customization point: install.sh seeds
+    // it once and never overwrites it, so a project can edit it freely. It builds
+    // FROM ae-container-base:local (built from base.Dockerfile by initialize.sh).
+    "dockerfile": "local.Dockerfile"
   },
 
   "containerEnv": {

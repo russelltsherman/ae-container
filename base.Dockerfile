@@ -1,11 +1,11 @@
 # Toolchain base image for the devcontainer.
 #
 # This carries the slow, rarely-changing layers (apt deps, Node, the agent CLIs)
-# so the per-container build in ./Dockerfile only re-runs the small
+# so the per-container build in ./local.Dockerfile only re-runs the small
 # security/config layers on top. scripts/initialize.sh (the host-side
 # initializeCommand) builds this image on demand before `devcontainer up`,
 # tagging it with a content hash of THIS file so it rebuilds only when this file
-# changes. The Dockerfile then starts `FROM ae-container-base:local`.
+# changes. local.Dockerfile then starts `FROM ae-container-base:local`.
 #
 # NOTE: the Claude CLI below pins to the published "latest" at build time. Because
 # this image is content-hash cached, that pin only refreshes when this file
