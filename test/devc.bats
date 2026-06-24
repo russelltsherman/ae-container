@@ -511,6 +511,77 @@ STUB
   [[ "$output" == *"base image Dockerfile not found"* ]]
 }
 
+# ---------------------------------------------------------------------------
+# Makefile — manual base image rebuild target
+# ---------------------------------------------------------------------------
+#
+# `make base` forces a fresh, no-cache build of the toolchain base image
+# (to re-pull the "latest"-pinned Claude CLI / refresh apt without editing
+# base.Dockerfile). It mirrors initialize.sh's content-hash tag scheme and
+# AEC_BASE_DOCKERFILE seam: build ae-container-base:<hash12>, then repoint
+# ae-container-base:local at it. A record-everything docker stub captures calls.
+
+MAKEFILE="$REPO_ROOT/Makefile"
+
+# docker stub that records every invocation and succeeds (no inspect branch —
+# the Makefile never probes the cache; it always rebuilds).
+_make_docker_stub() {
+  cat > "$BATS_TEST_TMPDIR/stubs/docker" <<STUB
+#!/bin/sh
+echo "\$@" >> "$BATS_TEST_TMPDIR/calls/docker"
+exit 0
+STUB
+  chmod +x "$BATS_TEST_TMPDIR/stubs/docker"
+}
+
+@test "make base: forces a --no-cache build of the hashed base image" {
+  _make_docker_stub
+  export AEC_BASE_DOCKERFILE="$BATS_TEST_TMPDIR/base.Dockerfile"
+  printf 'FROM scratch\n' > "$AEC_BASE_DOCKERFILE"
+  run make -f "$MAKEFILE" base
+  [ "$status" -eq 0 ]
+  [[ "$(stub_calls docker)" == *"build --no-cache -f $AEC_BASE_DOCKERFILE -t ae-container-base:"* ]]
+}
+
+@test "make base: repoints the :local alias at the freshly built hash" {
+  _make_docker_stub
+  export AEC_BASE_DOCKERFILE="$BATS_TEST_TMPDIR/base.Dockerfile"
+  printf 'FROM scratch\n' > "$AEC_BASE_DOCKERFILE"
+  run make -f "$MAKEFILE" base
+  [ "$status" -eq 0 ]
+  [[ "$(stub_calls docker)" == *"tag ae-container-base:"*" ae-container-base:local"* ]]
+}
+
+@test "make base: tags with the same 12-char hash scheme as initialize.sh" {
+  _make_docker_stub
+  export AEC_BASE_DOCKERFILE="$BATS_TEST_TMPDIR/base.Dockerfile"
+  printf 'FROM scratch\n' > "$AEC_BASE_DOCKERFILE"
+
+  # initialize.sh's hash for the same file (its docker stub records the tag).
+  _init_docker_stub 1
+  local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
+  run bash "$INITIALIZE"
+  [ "$status" -eq 0 ]
+  local init_tag; init_tag="$(grep -oE 'ae-container-base:[0-9a-f]{12}' "$BATS_TEST_TMPDIR/calls/docker" | head -1)"
+
+  : > "$BATS_TEST_TMPDIR/calls/docker"
+  _make_docker_stub
+  run make -f "$MAKEFILE" base
+  [ "$status" -eq 0 ]
+  local make_tag; make_tag="$(grep -oE 'ae-container-base:[0-9a-f]{12}' "$BATS_TEST_TMPDIR/calls/docker" | head -1)"
+
+  [ -n "$init_tag" ]
+  [ "$init_tag" = "$make_tag" ]
+}
+
+@test "make base: exits non-zero when base.Dockerfile is missing" {
+  _make_docker_stub
+  export AEC_BASE_DOCKERFILE="$BATS_TEST_TMPDIR/does-not-exist.Dockerfile"
+  run make -f "$MAKEFILE" base
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not found"* ]]
+}
+
 @test "base.Dockerfile: derives FROM the upstream devcontainers base image" {
   grep -Eq '^FROM mcr\.microsoft\.com/devcontainers/base:' "$REPO_ROOT/base.Dockerfile"
 }
