@@ -132,10 +132,14 @@ JSON
 
 @test "local.Dockerfile: a /etc/profile.d snippet exports CLAUDE_CODE_OAUTH_TOKEN from the mounted token" {
   # The token reaches login shells / userEnvProbe (and thus `devc exec claude -p`)
-  # via /etc/profile.d, not a ~/.bashrc export and not /etc/environment.
-  grep -q '/etc/profile.d/claude-code-token.sh' "$REPO_ROOT/local.Dockerfile"
-  grep -q 'CLAUDE_CODE_OAUTH_TOKEN' "$REPO_ROOT/local.Dockerfile"
-  grep -q '\.bot/claude/oauth-token' "$REPO_ROOT/local.Dockerfile"
+  # via /etc/profile.d, not a ~/.bashrc export and not /etc/environment. The snippet
+  # lives in etc/profile.d/cc-oauth-token.sh and is baked in by the wildcard
+  # `COPY etc/profile.d/. /etc/profile.d/` line in local.Dockerfile.
+  local snippet="$REPO_ROOT/etc/profile.d/cc-oauth-token.sh"
+  grep -Eq '^COPY etc/profile.d/\. /etc/profile.d/$' "$REPO_ROOT/local.Dockerfile"
+  [ -f "$snippet" ]
+  grep -q 'export CLAUDE_CODE_OAUTH_TOKEN' "$snippet"
+  grep -q '\.bot/claude/oauth-token' "$snippet"
   # Guard against regressing to the interactive-only ~/.bashrc export.
   ! grep -q 'export CLAUDE_CODE_OAUTH_TOKEN' "$REPO_ROOT/scripts/post-create.sh"
 }
@@ -1020,7 +1024,7 @@ dc_live_seccomp_json() {
 
 @test "CS-01: the /etc/profile.d token snippet exists in the container" {
   _integration_restore_env
-  run dc_exec test -f /etc/profile.d/claude-code-token.sh
+  run dc_exec test -f /etc/profile.d/cc-oauth-token.sh
   [ "$status" -eq 0 ]
 }
 
@@ -1216,33 +1220,34 @@ dc_live_seccomp_json() {
   [ "$status" -eq 0 ]
 }
 
-@test "shell env: omlx/ollama/yolo launcher functions are written to ~/.bashrc" {
+@test "shell env: omlx/ollama/yolo launcher functions are defined in a login shell" {
+  # The launchers live in /etc/profile.d/cc-aliases.sh (baked via COPY etc/profile.d/.)
+  # and are sourced by login shells — not appended to ~/.bashrc. Assert a login shell
+  # (`bash -lc`, as `devc shell` uses) actually has them defined.
   _integration_restore_env
-  run dc_exec bash -c 'grep -q "yolo()" ~/.bashrc \
-    && grep -q "omlx()" ~/.bashrc \
-    && grep -q "ollama()" ~/.bashrc'
+  run dc_exec bash -lc 'type yolo && type omlx && type ollama'
   [ "$status" -eq 0 ]
 }
 
 # ===========================================================================
-# scripts/post-create.sh — omlx() per-tier model resolution (unit, no container)
+# etc/profile.d/cc-aliases.sh — omlx() per-tier model resolution (unit, no container)
 # ===========================================================================
 #
-# The omlx() launcher is defined as literal text inside a heredoc in
-# post-create.sh. We extract just that function with sed (range from the
-# `omlx() {` opener to its column-0 closing brace), source it, and replace the
-# `claude` binary with a stub that dumps its environment. Asserting on that env
-# dump verifies which ANTHROPIC_DEFAULT_*_MODEL / CLAUDE_CODE_SUBAGENT_MODEL
-# values each combination of MLX_*_MODEL vars resolves to — without a
-# container, a real claude, or post-create's git side effects.
+# The omlx() launcher is defined in etc/profile.d/cc-aliases.sh (baked into the
+# image via `COPY etc/profile.d/.` and sourced by login shells). We extract just
+# that function with sed (range from the `omlx() {` opener to its column-0 closing
+# brace), source it, and replace the `claude` binary with a stub that dumps its
+# environment. Asserting on that env dump verifies which ANTHROPIC_DEFAULT_*_MODEL
+# / CLAUDE_CODE_SUBAGENT_MODEL values each combination of MLX_*_MODEL vars resolves
+# to — without a container, a real claude, or post-create's git side effects.
 
-POST_CREATE="$REPO_ROOT/scripts/post-create.sh"
+CC_ALIASES="$REPO_ROOT/etc/profile.d/cc-aliases.sh"
 
 # Extract omlx() to a sourceable file and install a claude stub that prints its
 # environment to stdout. The stub uses `env` so every VAR=val the function
 # passes through `env "${_env[@]}" claude` is observable.
 _load_omlx() {
-  sed -n '/^omlx() {/,/^}/p' "$POST_CREATE" > "$BATS_TEST_TMPDIR/omlx.sh"
+  sed -n '/^omlx() {/,/^}/p' "$CC_ALIASES" > "$BATS_TEST_TMPDIR/omlx.sh"
   printf '#!/bin/sh\nenv\n' > "$BATS_TEST_TMPDIR/stubs/claude"
   chmod +x "$BATS_TEST_TMPDIR/stubs/claude"
 }
