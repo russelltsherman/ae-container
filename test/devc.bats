@@ -282,6 +282,41 @@ STUB
   grep -q 'COPY etc/squid/local.allowlist.conf /etc/squid/local.allowlist.conf' "$REPO_ROOT/local.Dockerfile"
 }
 
+@test "squid.open.conf: allows CONNECT to any domain on 443 with no dstdomain allowlist" {
+  # The wide-egress opt-in must allow HTTPS to any domain (no allowlist), yet keep
+  # tunnels pinned to 443 — so 'deny CONNECT' must come BEFORE 'allow all', else a
+  # CONNECT to any port would slip through the catch-all.
+  local conf="$REPO_ROOT/etc/squid/squid.open.conf"
+  grep -Eq '^http_access allow CONNECT SSL_ports$' "$conf"
+  grep -Eq '^http_access allow all$' "$conf"
+  # No per-domain allowlist — this config is intentionally allowlist-free.
+  ! grep -q 'dstdomain' "$conf"
+  # Ordering: 'deny CONNECT' (non-443 tunnels) precedes the 'allow all' catch-all.
+  local deny_line allow_line
+  deny_line="$(grep -n '^http_access deny CONNECT$' "$conf" | head -1 | cut -d: -f1)"
+  allow_line="$(grep -n '^http_access allow all$' "$conf" | head -1 | cut -d: -f1)"
+  [ -n "$deny_line" ]
+  [ -n "$allow_line" ]
+  [ "$deny_line" -lt "$allow_line" ]
+}
+
+@test "squid.open.conf: parses cleanly under squid -k parse" {
+  command -v squid >/dev/null 2>&1 || skip "squid not on test host"
+  run squid -k parse -f "$REPO_ROOT/etc/squid/squid.open.conf"
+  [ "$status" -eq 0 ]
+}
+
+@test "devc template: ships squid.open.conf (wide-egress opt-in) to the project" {
+  local dest="$BATS_TEST_TMPDIR/proj"; mkdir -p "$dest"
+  run bash "$INSTALL" template "$dest"
+  [ "$status" -eq 0 ]
+  [ -f "$dest/.agentcontainer/etc/squid/squid.open.conf" ]
+}
+
+@test "local.Dockerfile: documents the wide-egress squid.open.conf swap" {
+  grep -q 'COPY etc/squid/squid.open.conf /etc/squid/squid.conf' "$REPO_ROOT/local.Dockerfile"
+}
+
 @test "devc exec: forwards the command to 'devcontainer exec'" {
   local ws="$BATS_TEST_TMPDIR/ws"; mkdir -p "$ws"; cd "$ws"
   run bash "$INSTALL" exec ls -la

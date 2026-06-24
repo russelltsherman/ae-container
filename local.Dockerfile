@@ -18,6 +18,12 @@ USER root
 # reviewed allowlist; local.allowlist.conf holds per-project additions (seeded
 # once by `aec template`, never overwritten). squid.conf merges both. Both must
 # be present before the `squid -z` below parses the config.
+#
+# To opt this project into WIDE-OPEN egress (any HTTPS domain on 443, still via
+# the proxy and still logged), change the squid.conf source below to
+# squid.open.conf:
+#   COPY etc/squid/squid.open.conf /etc/squid/squid.conf
+# Leave the destination path as-is — start-squid is pinned to /etc/squid/squid.conf.
 COPY etc/squid/squid.conf /etc/squid/squid.conf
 COPY etc/squid/allowlist.conf /etc/squid/allowlist.conf
 COPY etc/squid/local.allowlist.conf /etc/squid/local.allowlist.conf
