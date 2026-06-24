@@ -54,6 +54,20 @@
     // Claude Code Config
     "source=${localEnv:HOME}/.claude/,target=/home/vscode/.claude/,type=bind",
 
+    // Claude Code's plugin state — ~/.claude/plugins/installed_plugins.json and
+    // known_marketplaces.json — records ABSOLUTE host paths to each cached plugin
+    // and marketplace (e.g. /Users/<you>/.claude/plugins/cache/...). Those files
+    // are shared through the bind mount above, so the host paths arrive verbatim;
+    // but the container's $HOME is /home/vscode, so they would not resolve and the
+    // plugin loader can't find the cache. Mounting the same host dir a SECOND time
+    // at the host's own absolute path (the same trick we use for the workspace,
+    // workspaceMount below) makes those embedded paths resolve unchanged — without
+    // rewriting the shared config files (which would corrupt the host copy, see
+    // .claude.json note) or re-connecting marketplaces inside every container.
+    // Both targets point at the one host dir, so they are the same files; only
+    // directory-source marketplaces living OUTSIDE ~/.claude are not covered.
+    "source=${localEnv:HOME}/.claude/,target=${localEnv:HOME}/.claude/,type=bind",
+
     // Claude Code stores mutable per-machine STATE (project history, MCP
     // registrations, onboarding/migration flags) in ~/.claude.json, rewriting the
     // whole file on many operations. Bind-mounting the single host file read-write

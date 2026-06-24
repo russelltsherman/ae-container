@@ -130,6 +130,14 @@ JSON
     "$REPO_ROOT/devcontainer.json"
 }
 
+@test "devcontainer.json: also bind-mounts .claude at the host home path so plugin paths resolve" {
+  # Claude's plugin state stores ABSOLUTE host paths (/Users/<you>/.claude/...).
+  # A second mount of the same host dir at its own absolute path makes those
+  # embedded paths resolve inside the container, where $HOME is /home/vscode.
+  grep -Eq '"source=\$\{localEnv:HOME\}/\.claude/,target=\$\{localEnv:HOME\}/\.claude/,type=bind"' \
+    "$REPO_ROOT/devcontainer.json"
+}
+
 @test "local.Dockerfile: a /etc/profile.d snippet exports CLAUDE_CODE_OAUTH_TOKEN from the mounted token" {
   # The token reaches login shells / userEnvProbe (and thus `devc exec claude -p`)
   # via /etc/profile.d, not a ~/.bashrc export and not /etc/environment. The snippet
