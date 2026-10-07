@@ -16,8 +16,8 @@
 
 FROM buildpack-deps:bookworm-scm AS gobuild
 
-ENV PATH /usr/local/go/bin:$PATH
-ENV GOLANG_VERSION 1.26.5
+ENV PATH=/usr/local/go/bin:$PATH
+ENV GOLANG_VERSION=1.26.5
 
 RUN set -eux; \
 	now="$(date '+%s')"; \
