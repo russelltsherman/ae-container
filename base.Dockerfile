@@ -178,10 +178,11 @@ RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
 
 # install NPM dependencies
 RUN npm install -g \
-    @mariozechner/pi-coding-agent@0.73.1 \
-    @openai/codex@0.137.0 \
-    @devcontainers/cli@0.87.0 \
-    @withgraphite/graphite-cli@1.8.6 \
+    @fission-ai/openspec@latest \
+    @earendil-works/pi-coding-agent@latest \
+    @openai/codex@latest \
+    @devcontainers/cli@latest \
+    @withgraphite/graphite-cli@latest \
     && npm cache clean --force
 
 # Install Claude Code as vscode user (native installer writes to ~/.local/bin)
