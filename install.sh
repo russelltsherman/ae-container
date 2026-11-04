@@ -247,6 +247,10 @@ cmd_template() {
   fi
   cp "$SCRIPT_DIR/devcontainer.json" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/protected-paths" "$devcontainer_dir/"
+  # Self-ignoring directory: a `*` .gitignore keeps the whole .agentcontainer/
+  # (including this file) out of the host project's git without touching the
+  # project's own .gitignore.
+  printf '*\n' > "$devcontainer_dir/.gitignore"
 
   # Restore preserved mounts
   if [[ -n "$preserved_mounts" ]]; then

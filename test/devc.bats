@@ -210,6 +210,16 @@ STUB
   [ -f "$dest/.agentcontainer/etc/seccomp/hardened.json" ]
 }
 
+@test "devc template: writes a self-ignoring .gitignore so git skips .agentcontainer" {
+  local dest="$BATS_TEST_TMPDIR/proj"; mkdir -p "$dest"
+  git -C "$dest" init -q
+  run bash "$INSTALL" template "$dest"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$dest/.agentcontainer/.gitignore")" = "*" ]
+  # Nothing under .agentcontainer/ shows up as untracked.
+  [ -z "$(git -C "$dest" status --porcelain --untracked-files=all)" ]
+}
+
 @test "devc template: seeds local.Dockerfile (FROM the base alias) when the target has none" {
   local dest="$BATS_TEST_TMPDIR/proj"; mkdir -p "$dest"
   run bash "$INSTALL" template "$dest"
