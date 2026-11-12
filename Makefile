@@ -7,7 +7,7 @@
 # scripts/initialize.sh (the host-side initializeCommand) builds the base ON
 # DEMAND, tagged with a content hash of base.Dockerfile, so it rebuilds only when
 # that file changes. The Claude CLI in base.Dockerfile pins to "latest" at build
-# time, so that same content-hash cache also pins Claude's version. `rebuild-base`
+# time, so that same content-hash cache also pins Claude's version. `base`
 # forces a fresh, no-cache build to re-pull "latest" and refresh apt packages
 # WITHOUT editing base.Dockerfile — the manual refresh the README documents.
 #
