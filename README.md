@@ -197,3 +197,14 @@ registry pull), so nothing needs to be published.
 > devc rebuild
 > ```
 
+
+## Development
+
+| Command | What it does |
+|---|---|
+| `make help` | Lists the Makefile targets. |
+| `make base` | Forces a no-cache rebuild of the base image, re-pulling the latest Claude CLI and apt packages without editing `base.Dockerfile`. |
+| `bats test/devc.bats` | Runs the tests. |
+| `bats test/devc.bats -f '<name regex>'` | Runs only the tests whose names match. |
+
+Set `AEC_BASE_DOCKERFILE` to point `scripts/initialize.sh` and the Makefile at a different base Dockerfile. The tests use this.
